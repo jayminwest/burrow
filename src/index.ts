@@ -113,3 +113,45 @@ export {
 	type RunLoopOptions,
 	type RunOutcome,
 } from "./runner/run-loop.ts";
+export {
+	CLAUDE_CODE_SETTINGS_PATH,
+	claudeCodeRuntime,
+	encodeClaudeStdin,
+} from "./runtime/claude-code.ts";
+export {
+	CODEX_PROMPT_DIR,
+	codexPromptFileFor,
+	codexRuntime,
+	composeCodexPrompt,
+	writeCodexPromptFile,
+} from "./runtime/codex.ts";
+export { agentConfigToRuntime, loadAgentConfig } from "./runtime/declarative.ts";
+export { parseJsonlClaude } from "./runtime/parsers/jsonl-claude.ts";
+export { parseRawText } from "./runtime/parsers/raw-text.ts";
+export { parseStreamJson } from "./runtime/parsers/stream-json.ts";
+export { AgentRegistry, BUILT_IN_RUNTIMES } from "./runtime/registry.ts";
+export type {
+	AgentRuntime,
+	InstallCheckResult,
+	ParseContext,
+	PrepareContext,
+	ResumeContext,
+	RuntimeEvent,
+	SpawnContext,
+} from "./runtime/runtime.ts";
+export { composeSaplingPrompt, saplingRuntime } from "./runtime/sapling.ts";
+export {
+	AGENT_INBOX_DELIVERIES,
+	AGENT_OUTPUT_FORMATS,
+	AGENT_PROMPT_DELIVERIES,
+	type AgentConfig,
+	type AgentConfigParseError,
+	type AgentConfigParseResult,
+	AgentConfigSchema,
+	type AgentHooks,
+	type AgentInboxDelivery,
+	type AgentInstallCheck,
+	type AgentOutputFormat,
+	type AgentPromptDelivery,
+	parseAgentConfig,
+} from "./schemas/agent-config.ts";

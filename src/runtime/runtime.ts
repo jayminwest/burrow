@@ -1,0 +1,78 @@
+/**
+ * Harness-agnostic agent runtime contract (SPEC §12).
+ *
+ * Every runtime — built-in or declarative — is wrapped by an `AgentRuntime`.
+ * The run loop calls `prepareWorkspace` once per spawn, hands the runtime a
+ * `SpawnContext` to render an argv via `buildSpawnCommand`, then feeds each
+ * stdout line back through `parseEvents` to produce the structured events
+ * persisted to the `events` table (SPEC §14.1).
+ *
+ * Spawn-per-turn runtimes (claude-code, sapling) override `encodeInboxMessage`
+ * to inject pending steering messages alongside the user prompt; one-shot
+ * runtimes (codex) leave it unset and let the inbox layer queue messages for
+ * the next *run* (SPEC §13.3).
+ */
+
+import type { Burrow, Message, Run, RunEvent } from "../core/types.ts";
+import type { SpawnCommand } from "../provider/types.ts";
+
+export interface InstallCheckResult {
+	installed: boolean;
+	version?: string;
+	hint?: string;
+}
+
+export interface SpawnContext {
+	burrow: Burrow;
+	run: Run;
+	prompt: string;
+	/** Steering messages to deliver as part of this turn (SPEC §13.2). */
+	pendingMessages: Message[];
+	/** Resolved env that will be exported into the sandbox. */
+	envResolved: Record<string, string>;
+	/**
+	 * Workspace path on the host. Sandbox bind-mounts this to /workspace, so
+	 * the agent only ever sees `/workspace`; runtime code that writes setup
+	 * files (e.g. .claude/settings.local.json) operates on the host path.
+	 */
+	workspacePath: string;
+}
+
+export interface ResumeContext extends SpawnContext {
+	/** The prior run we're continuing from. Always in a terminal state. */
+	priorRun: Run;
+}
+
+export interface ParseContext {
+	burrow: Burrow;
+	run: Run;
+}
+
+export interface PrepareContext {
+	burrow: Burrow;
+	run: Run;
+	workspacePath: string;
+}
+
+/**
+ * Partial event shape produced by `parseEvents`. The run-loop layer fills in
+ * `id`, `seq`, `burrowId`, `runId`, and `ts` when persisting.
+ */
+export type RuntimeEvent = Omit<RunEvent, "id" | "seq" | "burrowId" | "runId" | "ts"> & {
+	ts?: Date;
+};
+
+export interface AgentRuntime {
+	id: string;
+	displayName: string;
+	supportsResume: boolean;
+
+	buildSpawnCommand(ctx: SpawnContext): SpawnCommand;
+	parseEvents(line: string, ctx: ParseContext): RuntimeEvent[];
+
+	buildResumeCommand?(ctx: ResumeContext): SpawnCommand;
+	encodeInboxMessage?(messages: Message[]): { stdin: string };
+	prepareWorkspace?(ctx: PrepareContext): Promise<void>;
+
+	installCheck(): Promise<InstallCheckResult>;
+}
