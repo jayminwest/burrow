@@ -61,6 +61,12 @@ import { runShipCommand, type ShipCommandOptions, shipResultToJson } from "./com
 import { renderShowReport, runShowCommand, showResultToJson } from "./commands/show.ts";
 import { renderStopResult, runStopCommand } from "./commands/stop.ts";
 import { renderUpResult, runUpCommand } from "./commands/up.ts";
+import {
+	parseNonNegative as parseWatchNonNegative,
+	parsePositive as parseWatchPositive,
+	runWatchCommand,
+	type WatchCommandOptions,
+} from "./commands/watch.ts";
 
 const program = new Command();
 
@@ -568,6 +574,57 @@ program
 			ac.dispose();
 		}
 	});
+
+program
+	.command("watch")
+	.description("live multi-burrow dashboard (TUI by default; --json emits NDJSON snapshots)")
+	.option("--json", "force NDJSON DashboardSnapshot output (default when not a TTY)")
+	.option("--once", "NDJSON only: emit one snapshot and exit")
+	.option("--coalesce-ms <ms>", "snapshot coalescing window (default 100)")
+	.option("--poll-ms <ms>", "polling fallback interval (default 1000; 0 disables)")
+	.option("--runs-limit <n>", "cap recent runs per burrow (default 20)")
+	.option("--event-tail-cap <n>", "cap event tail per burrow (default 500)")
+	.action(
+		async (opts: {
+			json?: boolean;
+			once?: boolean;
+			coalesceMs?: string;
+			pollMs?: string;
+			runsLimit?: string;
+			eventTailCap?: string;
+		}) => {
+			const watchOpts: WatchCommandOptions = {};
+			if (opts.json !== undefined) watchOpts.json = opts.json;
+			if (opts.once !== undefined) watchOpts.once = opts.once;
+			const coalesce = parseWatchNonNegative(opts.coalesceMs, "--coalesce-ms");
+			if (coalesce !== undefined) watchOpts.coalesceMs = coalesce;
+			const poll = parseWatchNonNegative(opts.pollMs, "--poll-ms");
+			if (poll !== undefined) watchOpts.pollIntervalMs = poll;
+			const runsLimit = parseWatchPositive(opts.runsLimit, "--runs-limit");
+			if (runsLimit !== undefined) watchOpts.runsLimit = runsLimit;
+			const eventTailCap = parseWatchPositive(opts.eventTailCap, "--event-tail-cap");
+			if (eventTailCap !== undefined) watchOpts.eventTailCap = eventTailCap;
+
+			await withClient(async (client) => {
+				const ac = makeAbortController();
+				try {
+					await runWatchCommand({
+						client,
+						options: watchOpts,
+						stdout: process.stdout as NodeJS.WritableStream & {
+							write(data: string): unknown;
+							columns?: number;
+							rows?: number;
+						},
+						signal: ac.controller.signal,
+						isTty: Boolean(process.stdout.isTTY),
+					});
+				} finally {
+					ac.dispose();
+				}
+			});
+		},
+	);
 
 program
 	.command("completions")
