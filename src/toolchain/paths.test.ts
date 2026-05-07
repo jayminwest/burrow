@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { expandToolchainBinDirs } from "./paths.ts";
+import { expandToolchainBinDirs, resolveBunGlobalInstallDir } from "./paths.ts";
 
 describe("expandToolchainBinDirs", () => {
 	test("returns dirname of each non-existent path in input order, deduped", () => {
@@ -58,5 +58,62 @@ describe("expandToolchainBinDirs", () => {
 		// We still surface the dirname — bwrap/seatbelt mount it `--ro-bind-try`
 		// equivalent so this is harmless if the path is missing at exec time.
 		expect(out).toEqual(["/definitely/not/a/real/path"]);
+	});
+});
+
+describe("resolveBunGlobalInstallDir", () => {
+	test("returns <BUN_INSTALL>/install/global/node_modules when it exists", () => {
+		const root = mkdtempSync(join(tmpdir(), "burrow-bun-install-"));
+		try {
+			const installDir = join(root, "install", "global", "node_modules");
+			mkdirSync(installDir, { recursive: true });
+			const out = resolveBunGlobalInstallDir({ bunInstall: root });
+			expect(out).toBe(installDir);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
+	test("returns null when the install root doesn't exist", () => {
+		const out = resolveBunGlobalInstallDir({ bunInstall: "/definitely/not/a/real/bun-install" });
+		expect(out).toBeNull();
+	});
+
+	test("falls back to $HOME/.bun when BUN_INSTALL is unset", () => {
+		const fakeHome = mkdtempSync(join(tmpdir(), "burrow-bun-home-"));
+		try {
+			const installDir = join(fakeHome, ".bun", "install", "global", "node_modules");
+			mkdirSync(installDir, { recursive: true });
+			const out = resolveBunGlobalInstallDir({ home: fakeHome, hostEnv: {} });
+			expect(out).toBe(installDir);
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+		}
+	});
+
+	test("BUN_INSTALL from hostEnv wins over $HOME fallback", () => {
+		const fakeHome = mkdtempSync(join(tmpdir(), "burrow-bun-home-"));
+		const fakeBun = mkdtempSync(join(tmpdir(), "burrow-bun-explicit-"));
+		try {
+			const installDir = join(fakeBun, "install", "global", "node_modules");
+			mkdirSync(installDir, { recursive: true });
+			// Intentionally do NOT populate fakeHome/.bun/install/global/node_modules.
+			const out = resolveBunGlobalInstallDir({
+				home: fakeHome,
+				hostEnv: { BUN_INSTALL: fakeBun },
+			});
+			expect(out).toBe(installDir);
+		} finally {
+			rmSync(fakeHome, { recursive: true, force: true });
+			rmSync(fakeBun, { recursive: true, force: true });
+		}
+	});
+
+	test("honors injected `exists` predicate (test seam)", () => {
+		const out = resolveBunGlobalInstallDir({
+			bunInstall: "/somewhere",
+			exists: (path) => path === "/somewhere/install/global/node_modules",
+		});
+		expect(out).toBe("/somewhere/install/global/node_modules");
 	});
 });

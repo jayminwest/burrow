@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Globally-installed bun packages reachable inside burrow.** When `bun` is
+  a declared toolchain, `burrow up` now mounts `<BUN_INSTALL>/install/global/node_modules`
+  in addition to `<BUN_INSTALL>/bin`. Previously, stub symlinks under
+  `~/.bun/bin/` (e.g. `ml`, `sd`, `cn`, `ov`, `sapling`) were visible by
+  name but their `.ts` source targets in the install root were sandbox-denied,
+  manifesting as `error loading current directory` (burrow-aa46).
+
 ## [0.1.0] - 2026-05-07
 
 Inaugural V1 release. Local-first, single-user OS-isolated sandbox runtime for

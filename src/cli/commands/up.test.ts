@@ -272,7 +272,9 @@ API_KEY = "op://Eng/web/api-key"
 
 	test("doctor's resolved toolchain paths land on profile.toolchainPaths", async () => {
 		// Two declared toolchains share `/fake/bin` — we expect the dirname dedup
-		// to collapse them into a single entry, in declaration order.
+		// to collapse them into a single entry, in declaration order. Inject a
+		// null bun resolver so this test stays focused on the dedup behavior
+		// rather than the host's real `~/.bun` layout (burrow-aa46).
 		writeFileSync(join(projectRoot, "burrow.toml"), `[toolchain]\nbun = "1.1"\nnode = "20"\n`);
 		const result = await runUpCommand({
 			client,
@@ -307,9 +309,118 @@ API_KEY = "op://Eng/web/api-key"
 					],
 				},
 			}),
+			bunGlobalInstallDirResolver: () => null,
 		});
 		const profile = result.burrow.profileJson as { toolchainPaths: string[] };
 		expect(profile.toolchainPaths).toEqual(["/fake/bin"]);
+	});
+
+	test("declared bun toolchain mounts the bun global install root (burrow-aa46)", async () => {
+		// When bun is a declared toolchain, the bun-globals dir
+		// (~/.bun/install/global/node_modules) lands on profile.toolchainPaths so
+		// stub symlinks under ~/.bun/bin/* (ml, sd, cn, …) can resolve to their
+		// realpath targets inside the sandbox.
+		writeFileSync(join(projectRoot, "burrow.toml"), `[toolchain]\nbun = "1.1"\n`);
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: {},
+			materializer: fakeMaterializer,
+			doctorRunner: async () => ({
+				platform: "linux",
+				ok: true,
+				checks: [],
+				toolchain: {
+					ok: true,
+					missing: [],
+					mismatched: [],
+					results: [
+						{
+							name: "bun",
+							binary: "bun",
+							requested: "1.1",
+							resolvedPath: "/fake/.bun/bin/bun",
+							status: "ok",
+							detail: "found",
+						},
+					],
+				},
+			}),
+			bunGlobalInstallDirResolver: () => "/fake/.bun/install/global/node_modules",
+		});
+		const profile = result.burrow.profileJson as { toolchainPaths: string[] };
+		expect(profile.toolchainPaths).toContain("/fake/.bun/install/global/node_modules");
+	});
+
+	test("non-bun toolchains do NOT pull in the bun global install root", async () => {
+		writeFileSync(join(projectRoot, "burrow.toml"), `[toolchain]\nnode = "20"\n`);
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: {},
+			materializer: fakeMaterializer,
+			doctorRunner: async () => ({
+				platform: "linux",
+				ok: true,
+				checks: [],
+				toolchain: {
+					ok: true,
+					missing: [],
+					mismatched: [],
+					results: [
+						{
+							name: "node",
+							binary: "node",
+							requested: "20",
+							resolvedPath: "/fake/bin/node",
+							status: "ok",
+							detail: "found",
+						},
+					],
+				},
+			}),
+			// Resolver should never be called when bun isn't declared — return a
+			// poison value to make sure it doesn't sneak in.
+			bunGlobalInstallDirResolver: () => "/should/not/appear",
+		});
+		const profile = result.burrow.profileJson as { toolchainPaths: string[] };
+		expect(profile.toolchainPaths).not.toContain("/should/not/appear");
+	});
+
+	test("bun toolchain with no global install root resolved adds nothing extra", async () => {
+		// Resolver returning null (no bun-globals installed on host) is the
+		// default-everywhere case; we shouldn't blow up or push junk into the
+		// profile.
+		writeFileSync(join(projectRoot, "burrow.toml"), `[toolchain]\nbun = "1.1"\n`);
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: {},
+			materializer: fakeMaterializer,
+			doctorRunner: async () => ({
+				platform: "linux",
+				ok: true,
+				checks: [],
+				toolchain: {
+					ok: true,
+					missing: [],
+					mismatched: [],
+					results: [
+						{
+							name: "bun",
+							binary: "bun",
+							requested: "1.1",
+							resolvedPath: "/fake/.bun/bin/bun",
+							status: "ok",
+							detail: "found",
+						},
+					],
+				},
+			}),
+			bunGlobalInstallDirResolver: () => null,
+		});
+		const profile = result.burrow.profileJson as { toolchainPaths: string[] };
+		expect(profile.toolchainPaths).toEqual(["/fake/.bun/bin"]);
 	});
 
 	test("declared agents contribute their resolved binary directory to toolchainPaths", async () => {

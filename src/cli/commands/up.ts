@@ -31,7 +31,7 @@ import type { BurrowToml } from "../../schemas/burrow-toml.ts";
 import { resolveEnv } from "../../secrets/env.ts";
 import type { OpResolver } from "../../secrets/op.ts";
 import { loadSecretStore } from "../../secrets/store.ts";
-import { expandToolchainBinDirs } from "../../toolchain/paths.ts";
+import { expandToolchainBinDirs, resolveBunGlobalInstallDir } from "../../toolchain/paths.ts";
 import { assertDoctorOk, type DoctorReport, runDoctor } from "./doctor.ts";
 
 const DEFAULT_BRANCH_PREFIX = "burrow";
@@ -68,6 +68,12 @@ export interface UpCommandInput {
 	hostEnv?: Record<string, string | undefined>;
 	/** CLI overrides that win over [env].defaults / [secrets] / store / host. */
 	envOverrides?: Record<string, string>;
+	/**
+	 * Test seam for the bun-global-install lookup (burrow-aa46). Tests inject
+	 * a fake to avoid touching the real `~/.bun` layout; the default uses
+	 * `resolveBunGlobalInstallDir()` which inspects host env + filesystem.
+	 */
+	bunGlobalInstallDirResolver?: () => string | null;
 }
 
 export interface UpCommandResult {
@@ -157,6 +163,8 @@ export async function runUpCommand(input: UpCommandInput): Promise<UpCommandResu
 		doctorReport,
 		burrowToml,
 		registry: input.client.agents,
+		bunGlobalInstallDirResolver:
+			input.bunGlobalInstallDirResolver ?? (() => resolveBunGlobalInstallDir()),
 	});
 	const readOnlyMounts = await collectCredentialPaths({
 		burrowToml,
@@ -209,6 +217,7 @@ interface CollectToolchainPathsInput {
 	doctorReport: DoctorReport | null;
 	burrowToml: BurrowToml | null;
 	registry: AgentsClient;
+	bunGlobalInstallDirResolver: () => string | null;
 }
 
 /**
@@ -224,11 +233,18 @@ interface CollectToolchainPathsInput {
  * `~/.local/share/claude/versions/...`). A non-installed agent simply
  * contributes nothing here; `bw prompt` still gates on installCheck so a
  * later run against that agent fails with a clean `AgentNotInstalled`.
+ *
+ * When `bun` is a declared toolchain we additionally mount its global
+ * install root (`<BUN_INSTALL>/install/global/node_modules`) so that
+ * stub symlinks under `<BUN_INSTALL>/bin/` (e.g. `ml`, `sd`, `cn`) can
+ * resolve to their `.ts` source — see burrow-aa46.
  */
 async function collectToolchainPaths(input: CollectToolchainPathsInput): Promise<string[]> {
 	const resolved: string[] = [];
+	let bunIsDeclaredToolchain = false;
 	for (const row of input.doctorReport?.toolchain?.results ?? []) {
 		if (row.resolvedPath) resolved.push(row.resolvedPath);
+		if (row.binary === "bun" && row.resolvedPath) bunIsDeclaredToolchain = true;
 	}
 	for (const agent of input.burrowToml?.agents ?? []) {
 		const rt = input.registry.get(agent.id);
@@ -241,7 +257,14 @@ async function collectToolchainPaths(input: CollectToolchainPathsInput): Promise
 			// we don't want it taking `burrow up` down with it.
 		}
 	}
-	return expandToolchainBinDirs(resolved);
+	const expanded = expandToolchainBinDirs(resolved);
+	if (bunIsDeclaredToolchain) {
+		const bunGlobal = input.bunGlobalInstallDirResolver();
+		if (bunGlobal && !expanded.includes(bunGlobal)) {
+			expanded.push(bunGlobal);
+		}
+	}
+	return expanded;
 }
 
 interface CollectCredentialPathsInput {

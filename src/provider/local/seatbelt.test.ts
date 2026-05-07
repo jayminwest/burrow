@@ -93,6 +93,20 @@ describe("buildSeatbeltProfile", () => {
 		expect(out).toContain('(allow file-read* (subpath "/Users/u/.cargo"))');
 	});
 
+	test("bun global install root is allowed read when in toolchainPaths (burrow-aa46)", () => {
+		// `up` adds `<BUN_INSTALL>/install/global/node_modules` to toolchainPaths
+		// when bun is a declared toolchain so the bun-shebang stubs under
+		// `<BUN_INSTALL>/bin/` (ml, sd, cn …) can resolve their .ts source.
+		const out = buildSeatbeltProfile(
+			baseProfile({
+				toolchainPaths: ["/Users/u/.bun/bin", "/Users/u/.bun/install/global/node_modules"],
+			}),
+		);
+		expect(out).toContain(
+			'(allow file-read* (subpath "/Users/u/.bun/install/global/node_modules"))',
+		);
+	});
+
 	test("temp roots get read+write so claude-code's Bash output round-trip works (burrow-8452)", () => {
 		const out = buildSeatbeltProfile(baseProfile());
 		expect(out).toContain('(allow file-read* file-write* (subpath "/private/tmp"))');

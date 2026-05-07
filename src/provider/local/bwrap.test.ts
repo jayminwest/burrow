@@ -85,6 +85,25 @@ describe("buildBwrapArgv", () => {
 		expectAdjacent(argv, "--ro-bind", "/run/user/1000/ssh-agent", "/run/user/1000/ssh-agent");
 	});
 
+	test("bun global install root mounts when present in toolchainPaths (burrow-aa46)", () => {
+		// `up` adds `<BUN_INSTALL>/install/global/node_modules` to toolchainPaths
+		// when bun is a declared toolchain so symlinked CLIs (ml, sd, cn …) can
+		// load their .ts source from inside the sandbox.
+		const argv = buildBwrapArgv(
+			baseProfile({
+				toolchainPaths: ["/home/u/.bun/bin", "/home/u/.bun/install/global/node_modules"],
+			}),
+			cmd(),
+			{ hostEnv: {} },
+		);
+		expectAdjacent(
+			argv,
+			"--ro-bind",
+			"/home/u/.bun/install/global/node_modules",
+			"/home/u/.bun/install/global/node_modules",
+		);
+	});
+
 	test("--clearenv wipes host env before --setenv lines", () => {
 		const argv = buildBwrapArgv(baseProfile(), cmd(), { hostEnv: { LEAKED: "yes" } });
 		const clearIdx = argv.indexOf("--clearenv");
