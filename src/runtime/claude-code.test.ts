@@ -1,9 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BurrowRow, MessageRow, RunRow } from "../db/schema.ts";
-import { CLAUDE_CODE_SETTINGS_PATH, claudeCodeRuntime, encodeClaudeStdin } from "./claude-code.ts";
+import {
+	CLAUDE_CODE_SETTINGS_PATH,
+	claudeCodeHostCredentialPaths,
+	claudeCodeRuntime,
+	encodeClaudeStdin,
+	forwardClaudeHostCredentials,
+} from "./claude-code.ts";
 
 function fakeBurrow(): BurrowRow {
 	return {
@@ -159,5 +165,65 @@ describe("claudeCodeRuntime.prepareWorkspace", () => {
 		const body = await readFile(join(dir, CLAUDE_CODE_SETTINGS_PATH), "utf8");
 		const parsed = JSON.parse(body);
 		expect(parsed).toMatchObject({ permissions: {}, hooks: {} });
+	});
+});
+
+describe("forwardClaudeHostCredentials", () => {
+	let workspaceDir: string;
+	let fakeHome: string;
+	beforeEach(async () => {
+		workspaceDir = await mkdtemp(join(tmpdir(), "burrow-claude-prep-"));
+		fakeHome = await mkdtemp(join(tmpdir(), "burrow-claude-home-"));
+	});
+	afterEach(async () => {
+		await rm(workspaceDir, { recursive: true, force: true });
+		await rm(fakeHome, { recursive: true, force: true });
+	});
+
+	test("copies host ~/.claude/.credentials.json into the burrow's .claude/ when present", async () => {
+		const fs = await import("node:fs/promises");
+		await fs.mkdir(join(fakeHome, ".claude"), { recursive: true });
+		await writeFile(join(fakeHome, ".claude", ".credentials.json"), '{"token":"fake"}');
+
+		await forwardClaudeHostCredentials(workspaceDir, fakeHome);
+
+		const forwarded = await readFile(join(workspaceDir, ".claude", ".credentials.json"), "utf8");
+		expect(JSON.parse(forwarded)).toEqual({ token: "fake" });
+	});
+
+	test("is a no-op when the host has no ~/.claude/.credentials.json", async () => {
+		await forwardClaudeHostCredentials(workspaceDir, fakeHome);
+		const fs = await import("node:fs");
+		expect(fs.existsSync(join(workspaceDir, ".claude", ".credentials.json"))).toBe(false);
+	});
+});
+
+describe("claudeCodeHostCredentialPaths", () => {
+	let fakeHome: string;
+	beforeEach(async () => {
+		fakeHome = await mkdtemp(join(tmpdir(), "burrow-claude-creds-"));
+	});
+	afterEach(async () => {
+		await rm(fakeHome, { recursive: true, force: true });
+	});
+
+	test("returns nothing when neither ~/.claude nor ~/.claude.json exists", () => {
+		expect(claudeCodeHostCredentialPaths(fakeHome)).toEqual([]);
+	});
+
+	test("returns existing host paths from ~/.claude and ~/.claude.json", async () => {
+		const fs = await import("node:fs/promises");
+		await fs.mkdir(join(fakeHome, ".claude"), { recursive: true });
+		await writeFile(join(fakeHome, ".claude.json"), "{}");
+		expect(claudeCodeHostCredentialPaths(fakeHome)).toEqual([
+			join(fakeHome, ".claude"),
+			join(fakeHome, ".claude.json"),
+		]);
+	});
+
+	test("filters out paths the host doesn't have", async () => {
+		const fs = await import("node:fs/promises");
+		await fs.mkdir(join(fakeHome, ".claude"), { recursive: true });
+		expect(claudeCodeHostCredentialPaths(fakeHome)).toEqual([join(fakeHome, ".claude")]);
 	});
 });

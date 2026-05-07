@@ -48,6 +48,14 @@ export const AgentConfigSchema = z.object({
 	optionalEnv: z.array(z.string()).optional(),
 	installCheck: AgentInstallCheckSchema.optional(),
 	hooks: AgentHooksSchema.optional(),
+	/**
+	 * Opt out of host credential forwarding for this agent (SPEC §17.4).
+	 * Implicit default is "forward": `burrow up` calls the runtime's
+	 * `credentialPaths()` and folds the result into
+	 * `SandboxProfile.readOnlyMounts`. Set `forwardCredentials = false` to
+	 * skip this for the agent (e.g. CI workers that ship their own creds).
+	 */
+	forwardCredentials: z.boolean().optional(),
 });
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;

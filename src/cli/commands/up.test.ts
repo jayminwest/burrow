@@ -361,6 +361,111 @@ API_KEY = "op://Eng/web/api-key"
 		expect(profile.toolchainPaths).toEqual([]);
 	});
 
+	test("registered agent's credentialPaths land on profile.readOnlyMounts (SPEC §17.4)", async () => {
+		writeFileSync(join(projectRoot, "burrow.toml"), `[[agents]]\nid = "creds-agent"\n`);
+		client.agents.register({
+			id: "creds-agent",
+			displayName: "Creds",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["x"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({ installed: true, version: "0", path: "/opt/x/bin/x" }),
+			credentialPaths: async () => ["/host/.creds-agent", "/host/.creds-agent.json"],
+		});
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: {},
+			materializer: fakeMaterializer,
+			skipDoctor: true,
+		});
+		const profile = result.burrow.profileJson as { readOnlyMounts: string[] };
+		expect(profile.readOnlyMounts).toEqual(["/host/.creds-agent", "/host/.creds-agent.json"]);
+	});
+
+	test("forwardCredentials = false suppresses credential forwarding for that agent", async () => {
+		writeFileSync(
+			join(projectRoot, "burrow.toml"),
+			`[[agents]]\nid = "creds-agent"\nforwardCredentials = false\n`,
+		);
+		client.agents.register({
+			id: "creds-agent",
+			displayName: "Creds",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["x"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({ installed: true, version: "0" }),
+			credentialPaths: async () => ["/host/.creds-agent"],
+		});
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: {},
+			materializer: fakeMaterializer,
+			skipDoctor: true,
+		});
+		const profile = result.burrow.profileJson as { readOnlyMounts: string[] };
+		expect(profile.readOnlyMounts).toEqual([]);
+	});
+
+	test("dedups credential paths across agents (declaration order wins)", async () => {
+		writeFileSync(
+			join(projectRoot, "burrow.toml"),
+			`[[agents]]\nid = "agent-a"\n[[agents]]\nid = "agent-b"\n`,
+		);
+		client.agents.register({
+			id: "agent-a",
+			displayName: "A",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["a"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({ installed: true }),
+			credentialPaths: async () => ["/host/shared", "/host/a-only"],
+		});
+		client.agents.register({
+			id: "agent-b",
+			displayName: "B",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["b"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({ installed: true }),
+			credentialPaths: async () => ["/host/shared", "/host/b-only"],
+		});
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: {},
+			materializer: fakeMaterializer,
+			skipDoctor: true,
+		});
+		const profile = result.burrow.profileJson as { readOnlyMounts: string[] };
+		expect(profile.readOnlyMounts).toEqual(["/host/shared", "/host/a-only", "/host/b-only"]);
+	});
+
+	test("a credentialPaths() that throws contributes nothing instead of failing up", async () => {
+		writeFileSync(join(projectRoot, "burrow.toml"), `[[agents]]\nid = "broken-agent"\n`);
+		client.agents.register({
+			id: "broken-agent",
+			displayName: "Broken",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["x"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({ installed: true }),
+			credentialPaths: async () => {
+				throw new Error("EACCES");
+			},
+		});
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: {},
+			materializer: fakeMaterializer,
+			skipDoctor: true,
+		});
+		const profile = result.burrow.profileJson as { readOnlyMounts: string[] };
+		expect(profile.readOnlyMounts).toEqual([]);
+	});
+
 	test("default_branch from burrow.toml is used when --base-branch is omitted", async () => {
 		writeFileSync(join(projectRoot, "burrow.toml"), `[project]\ndefault_branch = "trunk"\n`);
 		let captured: MaterializeProjectOptions | undefined;

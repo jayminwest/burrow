@@ -28,3 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   toolchain + 1Password CLI checks (`--project <root>`, `--no-project`);
   `burrow up` now loads `burrow.toml`, gates on `assertDoctorOk`, and folds
   `[sandbox]`/`[env]`/`[secrets]` into the persisted `SandboxProfile`.
+- Host credential forwarding (SPEC §17.4): `AgentRuntime.credentialPaths()`
+  declares which host paths a runtime needs read-only inside the sandbox to
+  authenticate. `burrow up` collects them across declared `[[agents]]` and
+  folds them into `SandboxProfile.readOnlyMounts`. `claude-code` reports
+  `~/.claude` and `~/.claude.json` and `prepareWorkspace` mirrors
+  `~/.claude/.credentials.json` into `<workspace>/.claude/` so the sandboxed
+  agent finds it via `HOME/.claude/.credentials.json`. Per-agent opt-out via
+  `forwardCredentials = false` in the burrow.toml `[[agents]]` row.

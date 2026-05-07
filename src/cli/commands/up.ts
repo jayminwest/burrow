@@ -158,10 +158,14 @@ export async function runUpCommand(input: UpCommandInput): Promise<UpCommandResu
 		burrowToml,
 		registry: input.client.agents,
 	});
+	const readOnlyMounts = await collectCredentialPaths({
+		burrowToml,
+		registry: input.client.agents,
+	});
 
 	const profile: SandboxProfile = {
 		workspace: workspace.workspacePath,
-		readOnlyMounts: [],
+		readOnlyMounts,
 		network,
 		allowedDomains: burrowToml?.sandbox?.allowed_domains ?? [],
 		envPassthrough: [],
@@ -238,6 +242,44 @@ async function collectToolchainPaths(input: CollectToolchainPathsInput): Promise
 		}
 	}
 	return expandToolchainBinDirs(resolved);
+}
+
+interface CollectCredentialPathsInput {
+	burrowToml: BurrowToml | null;
+	registry: AgentsClient;
+}
+
+/**
+ * Resolve the host paths each declared agent needs read-only inside the
+ * sandbox to authenticate (SPEC §17.4). Only registered runtimes that
+ * implement `credentialPaths()` contribute, and an agent that sets
+ * `forwardCredentials = false` in `burrow.toml` opts out entirely.
+ *
+ * The result lands on `SandboxProfile.readOnlyMounts`, dedup'd in declaration
+ * order so two agents pointing at the same path (e.g. shared `~/.claude`)
+ * don't fight over the bind mount. A runtime that throws is treated as
+ * contributing nothing — same defensive shape as `collectToolchainPaths`.
+ */
+async function collectCredentialPaths(input: CollectCredentialPathsInput): Promise<string[]> {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const agent of input.burrowToml?.agents ?? []) {
+		if (agent.forwardCredentials === false) continue;
+		const rt = input.registry.get(agent.id);
+		if (!rt?.credentialPaths) continue;
+		try {
+			for (const path of await rt.credentialPaths()) {
+				if (path.length === 0 || seen.has(path)) continue;
+				seen.add(path);
+				out.push(path);
+			}
+		} catch {
+			// credentialPaths may stat the host fs; a transient EACCES shouldn't
+			// take `burrow up` down — agent runs without forwarded creds and
+			// surfaces the auth failure itself.
+		}
+	}
+	return out;
 }
 
 export function renderUpResult(result: UpCommandResult): string {

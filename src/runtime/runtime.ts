@@ -81,5 +81,14 @@ export interface AgentRuntime {
 	encodeInboxMessage?(messages: Message[]): { stdin: string };
 	prepareWorkspace?(ctx: PrepareContext): Promise<void>;
 
+	/**
+	 * Host paths the runtime needs read-only inside the sandbox to authenticate
+	 * (SPEC §17.4). `burrow up` calls this for every declared agent and folds
+	 * the result into `SandboxProfile.readOnlyMounts`. Implementations should
+	 * filter to paths that exist on the host so a fresh user environment with
+	 * no credential cache contributes nothing instead of failing the mount.
+	 */
+	credentialPaths?(): Promise<string[]>;
+
 	installCheck(): Promise<InstallCheckResult>;
 }

@@ -8,12 +8,15 @@
  * into structured events.
  *
  * `prepareWorkspace` writes a minimal `.claude/settings.local.json` so the
- * agent has a stable settings file even when the project ships none. Phase 8
- * extends this with policy-driven hooks; for now we just guarantee the file
- * exists so PreToolUse hooks added later have somewhere to land.
+ * agent has a stable settings file even when the project ships none and, when
+ * the host is logged in (SPEC §17.4), copies `~/.claude/.credentials.json`
+ * into the burrow's `.claude/` so the sandboxed agent finds it via HOME-
+ * relative lookup without requiring a second `/login`.
  */
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { copyFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import type { Message } from "../core/types.ts";
 import type { SpawnCommand } from "../provider/types.ts";
@@ -33,10 +36,41 @@ const CLAUDE_BIN = "claude";
 
 export const CLAUDE_CODE_SETTINGS_PATH = ".claude/settings.local.json";
 
+/** Auth file Claude Code writes when it can't reach the OS keychain. */
+const CLAUDE_CREDENTIALS_FILE = ".credentials.json";
+
 const DEFAULT_SETTINGS: Record<string, unknown> = {
 	permissions: {},
 	hooks: {},
 };
+
+/**
+ * Resolve the host paths Claude Code uses for auth + per-user state. Returns
+ * only those that currently exist so a fresh host (no `~/.claude` yet)
+ * contributes nothing instead of breaking the bind mount.
+ */
+export function claudeCodeHostCredentialPaths(home: string = homedir()): string[] {
+	const candidates = [join(home, ".claude"), join(home, ".claude.json")];
+	return candidates.filter((p) => existsSync(p));
+}
+
+/**
+ * Forward host credentials into the burrow's `.claude/`. Inside the sandbox
+ * HOME is `/workspace`, so the agent reads `HOME/.claude/.credentials.json` —
+ * copying the host file ahead of every spawn lets token refreshes pick up on
+ * the next prompt without round-tripping through `bw destroy`. No-op when
+ * the host has never logged in.
+ */
+export async function forwardClaudeHostCredentials(
+	workspacePath: string,
+	home: string = homedir(),
+): Promise<void> {
+	const hostCreds = join(home, ".claude", CLAUDE_CREDENTIALS_FILE);
+	if (!existsSync(hostCreds)) return;
+	const claudeDir = join(workspacePath, ".claude");
+	mkdirSync(claudeDir, { recursive: true });
+	await copyFile(hostCreds, join(claudeDir, CLAUDE_CREDENTIALS_FILE));
+}
 
 export const claudeCodeRuntime: AgentRuntime = {
 	id: "claude-code",
@@ -89,12 +123,18 @@ export const claudeCodeRuntime: AgentRuntime = {
 	},
 
 	async prepareWorkspace(ctx: PrepareContext): Promise<void> {
-		const target = join(ctx.workspacePath, CLAUDE_CODE_SETTINGS_PATH);
-		await mkdir(join(ctx.workspacePath, ".claude"), { recursive: true });
-		await writeFile(target, `${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`, {
-			encoding: "utf8",
-			flag: "w",
-		});
+		const claudeDir = join(ctx.workspacePath, ".claude");
+		mkdirSync(claudeDir, { recursive: true });
+		writeFileSync(
+			join(ctx.workspacePath, CLAUDE_CODE_SETTINGS_PATH),
+			`${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`,
+			{ encoding: "utf8", flag: "w" },
+		);
+		await forwardClaudeHostCredentials(ctx.workspacePath);
+	},
+
+	async credentialPaths(): Promise<string[]> {
+		return claudeCodeHostCredentialPaths();
 	},
 
 	async installCheck(): Promise<InstallCheckResult> {
