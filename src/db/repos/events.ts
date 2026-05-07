@@ -7,7 +7,7 @@
  * seq for the same burrow.
  */
 
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, sql } from "drizzle-orm";
 import type { DrizzleDb } from "../client.ts";
 import { type EventRow, type EventStream, events } from "../schema.ts";
 
@@ -56,6 +56,24 @@ export class EventsRepo {
 				: eq(events.burrowId, burrowId);
 		const q = this.db.select().from(events).where(where).orderBy(asc(events.seq));
 		return opts.limit ? q.limit(opts.limit).all() : q.all();
+	}
+
+	/**
+	 * Last N events for a burrow, returned in seq-ascending order
+	 * (oldest-first within the window). Powers the dashboard view-model
+	 * `eventTail` cap — `listByBurrow({limit})` returns the FIRST N which
+	 * is the wrong end for live tail.
+	 */
+	listTail(burrowId: string, limit: number): EventRow[] {
+		if (limit <= 0) return [];
+		const rows = this.db
+			.select()
+			.from(events)
+			.where(eq(events.burrowId, burrowId))
+			.orderBy(desc(events.seq))
+			.limit(limit)
+			.all();
+		return rows.reverse();
 	}
 
 	countByBurrow(burrowId: string): number {
