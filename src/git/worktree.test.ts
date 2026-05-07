@@ -6,6 +6,7 @@ import {
 	addWorktree,
 	branchExists,
 	cloneRepo,
+	deleteBranch,
 	discoverHostClone,
 	initRepo,
 	listWorktrees,
@@ -100,6 +101,27 @@ describe("git worktree helpers", () => {
 		await expect(
 			addWorktree({ hostClonePath: repo, workspacePath: ws, branch: "does-not-exist" }),
 		).rejects.toThrow(/git worktree add .* failed/);
+	});
+
+	test("deleteBranch drops a non-checked-out branch", async () => {
+		const ws = join(root, "ws-delbranch");
+		await addWorktree({
+			hostClonePath: repo,
+			workspacePath: ws,
+			branch: "burrow/delme",
+			createBranch: true,
+			baseBranch: "main",
+		});
+		await removeWorktree({ hostClonePath: repo, workspacePath: ws });
+		expect(await branchExists(repo, "burrow/delme")).toBe(true);
+		await deleteBranch({ hostClonePath: repo, branch: "burrow/delme" });
+		expect(await branchExists(repo, "burrow/delme")).toBe(false);
+	});
+
+	test("deleteBranch throws when the branch does not exist", async () => {
+		await expect(deleteBranch({ hostClonePath: repo, branch: "no-such-branch" })).rejects.toThrow(
+			/git branch -D .* failed/,
+		);
 	});
 
 	test("cloneRepo materializes a fresh clone from a local path origin", async () => {

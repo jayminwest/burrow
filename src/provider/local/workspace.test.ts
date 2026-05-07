@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceMaterializationError } from "../../core/errors.ts";
 import { runGit } from "../../git/exec.ts";
-import { discoverHostClone, initRepo, listWorktrees } from "../../git/worktree.ts";
+import { branchExists, discoverHostClone, initRepo, listWorktrees } from "../../git/worktree.ts";
 import {
 	materializeProjectWorkspace,
 	materializeTaskWorkspace,
@@ -228,7 +228,7 @@ describe("removeMaterializedWorkspace", () => {
 		rmSync(home, { recursive: true, force: true });
 	});
 
-	test("removes a worktree-backed workspace and updates worktree list", async () => {
+	test("removes a worktree-backed workspace, drops the branch, and updates worktree list", async () => {
 		const ws = join(root, "ws");
 		const result = await materializeProjectWorkspace({
 			workspacePath: ws,
@@ -237,10 +237,12 @@ describe("removeMaterializedWorkspace", () => {
 			projectRoot: repo,
 			hostEnv: isolatedEnv(home),
 		});
+		expect(await branchExists(repo, "burrow/bur_remove")).toBe(true);
 		await removeMaterializedWorkspace({ workspacePath: ws, source: result.source });
 		const list = await listWorktrees(repo);
 		expect(list.find((e) => e.worktree.endsWith("/ws"))).toBeUndefined();
 		expect(await Bun.file(join(ws, "README.md")).exists()).toBe(false);
+		expect(await branchExists(repo, "burrow/bur_remove")).toBe(false);
 	});
 
 	test("removes a clone-backed workspace by deleting the directory tree", async () => {

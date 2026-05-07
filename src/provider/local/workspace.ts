@@ -27,6 +27,7 @@ import {
 import {
 	addWorktree,
 	cloneRepo,
+	deleteBranch,
 	discoverHostClone,
 	type HostClone,
 	pruneWorktrees,
@@ -169,6 +170,11 @@ export async function removeMaterializedWorkspace(opts: RemoveWorkspaceOptions):
 			await rm(opts.workspacePath, { recursive: true, force: true });
 			if (!isStaleWorktreeError(err)) throw err;
 		}
+		// `git worktree remove` leaves the branch ref behind. `up`/`fork` always
+		// carve a fresh per-burrow branch, so dropping it here keeps `git branch`
+		// clean. Failures are non-fatal: the workspace is gone, which is the
+		// caller's primary intent.
+		await deleteBranch({ hostClonePath, branch: opts.source.branch, force: true }).catch(() => {});
 		return;
 	}
 	await rm(opts.workspacePath, { recursive: true, force: true });

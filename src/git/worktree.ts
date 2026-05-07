@@ -89,6 +89,24 @@ export async function pruneWorktrees(hostClonePath: string): Promise<void> {
 	await runGitOrThrow(["worktree", "prune"], { cwd: hostClonePath });
 }
 
+export interface DeleteBranchOptions {
+	hostClonePath: string;
+	branch: string;
+	/** Default true: `-D` discards unmerged commits. `false` uses `-d`, which refuses unmerged history. */
+	force?: boolean;
+}
+
+/**
+ * Drop a local branch ref. `git worktree remove` only tears down the work
+ * tree; the branch lingers until something deletes it. Burrows carve a fresh
+ * `burrow/<id>` or `task/<id>` branch per workspace, so destroy follows up
+ * with this to keep `git branch` from accumulating dead refs.
+ */
+export async function deleteBranch(opts: DeleteBranchOptions): Promise<void> {
+	const flag = opts.force === false ? "-d" : "-D";
+	await runGitOrThrow(["branch", flag, opts.branch], { cwd: opts.hostClonePath });
+}
+
 export async function branchExists(hostClonePath: string, branch: string): Promise<boolean> {
 	const res = await runGit(["show-ref", "--verify", "--quiet", `refs/heads/${branch}`], {
 		cwd: hostClonePath,
