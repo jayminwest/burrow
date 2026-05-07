@@ -73,8 +73,21 @@ export function buildSeatbeltProfile(profile: SandboxProfile): string {
 		`(allow file-read-data file-read-metadata file-write* (subpath ${sbString(profile.workspace)}))`,
 	);
 
-	lines.push('(allow file-write* (subpath "/private/tmp"))');
-	lines.push('(allow file-write* (subpath "/private/var/folders"))');
+	// /private/tmp and /private/var/folders need read+write, not write-only.
+	// claude-code's Bash tool writes command output under /tmp/claude-${uid}/...
+	// (which resolves to /private/tmp via the /tmp symlink) and reads it back;
+	// without file-read* the read-back fails with EPERM and claude misreports
+	// it as a startup-cleanup race. /private/var/folders is the macOS per-user
+	// temp dir — same asymmetry would bite anything that round-trips through
+	// $TMPDIR (burrow-8452).
+	lines.push('(allow file-read* file-write* (subpath "/private/tmp"))');
+	lines.push('(allow file-read* file-write* (subpath "/private/var/folders"))');
+	// /dev is read-allowed via SYSTEM_READ_SUBPATHS but writes are denied,
+	// which breaks every shell redirect (zsh/bash `2>/dev/null`). Allow writes
+	// to the universal sinks; do NOT broaden to /dev (would expose disk
+	// devices and kernel entry points).
+	lines.push('(allow file-write* (literal "/dev/null"))');
+	lines.push('(allow file-write* (literal "/dev/dtracehelper"))');
 
 	if (profile.sshAuthSock) {
 		lines.push(`(allow file-read* file-write-data (literal ${sbString(profile.sshAuthSock)}))`);

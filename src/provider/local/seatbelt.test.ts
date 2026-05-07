@@ -93,6 +93,17 @@ describe("buildSeatbeltProfile", () => {
 		expect(out).toContain('(allow file-read* (subpath "/Users/u/.cargo"))');
 	});
 
+	test("temp roots get read+write so claude-code's Bash output round-trip works (burrow-8452)", () => {
+		const out = buildSeatbeltProfile(baseProfile());
+		expect(out).toContain('(allow file-read* file-write* (subpath "/private/tmp"))');
+		expect(out).toContain('(allow file-read* file-write* (subpath "/private/var/folders"))');
+	});
+
+	test("/dev/null is writable so shell redirects don't ENOENT (burrow-8452)", () => {
+		const out = buildSeatbeltProfile(baseProfile());
+		expect(out).toContain('(allow file-write* (literal "/dev/null"))');
+	});
+
 	test("paths with double-quotes are escaped", () => {
 		const out = buildSeatbeltProfile(baseProfile({ workspace: '/tmp/ws"weird' }));
 		expect(out).toContain('"/tmp/ws\\"weird"');
