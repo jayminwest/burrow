@@ -60,6 +60,38 @@ export {
 	RunsRepo,
 } from "./db/repos/index.ts";
 export {
+	type ArchiveBurrowInput,
+	type ArchiveBurrowResult,
+	archiveBurrow,
+	type RunsArchive,
+} from "./events/archive.ts";
+export {
+	type DestroyBurrowInput,
+	type DestroyBurrowResult,
+	destroyBurrowStorage,
+} from "./events/destroy.ts";
+export {
+	type TailAllOptions,
+	type TailOptions,
+	tailAll,
+	tailBurrow,
+} from "./events/poll.ts";
+export {
+	type AppendAndPublishInput,
+	appendAndPublish,
+} from "./events/publish.ts";
+export {
+	type EventEnvelope,
+	eventToEnvelope,
+	renderNdjson,
+	renderPretty,
+} from "./events/render.ts";
+export {
+	EventBus,
+	type EventListener,
+	type Subscription,
+} from "./events/tail.ts";
+export {
 	BURROW_GITCONFIG_FILENAME,
 	type GitIdentity,
 	type IdentitySpec,

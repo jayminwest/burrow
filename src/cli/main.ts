@@ -12,6 +12,8 @@ import { type BurrowDb, openDatabase } from "../db/client.ts";
 import { VERSION } from "../index.ts";
 import { type ChatCommandOptions, lineIterator, runChatCommand } from "./commands/chat.ts";
 import { renderDoctorReport, runDoctor } from "./commands/doctor.ts";
+import { type EventsCommandOptions, runEventsCommand } from "./commands/events.ts";
+import { type LogsCommandOptions, runLogsCommand } from "./commands/logs.ts";
 import {
 	parsePriority,
 	renderSendResult,
@@ -102,6 +104,65 @@ program
 				process.stdout.write(`\n${summary.queued} message(s) queued.\n`);
 			}
 		} finally {
+			db.close();
+		}
+	});
+
+program
+	.command("logs")
+	.description("tail one burrow's event log (replay or --follow)")
+	.argument("<id>", "burrow id")
+	.option("--follow", "stream new events as they're appended")
+	.option("--since <seq>", "skip events with seq <= the given value")
+	.option("--limit <n>", "stop after N events")
+	.option("--json", "force NDJSON output (default when not a TTY)")
+	.action(async (id: string, opts: LogsCommandOptions) => {
+		const db = await openCliDatabase();
+		const ac = new AbortController();
+		const onSig = () => ac.abort();
+		process.on("SIGINT", onSig);
+		process.on("SIGTERM", onSig);
+		try {
+			await runLogsCommand({
+				db,
+				burrowId: id,
+				options: opts,
+				stdout: process.stdout,
+				signal: ac.signal,
+				isTty: Boolean(process.stdout.isTTY),
+			});
+		} finally {
+			process.off("SIGINT", onSig);
+			process.off("SIGTERM", onSig);
+			db.close();
+		}
+	});
+
+program
+	.command("events")
+	.description("tail events across every active burrow (or --burrow allow-list)")
+	.option("--follow", "stream new events as they're appended")
+	.option("--burrow <id...>", "restrict to specific burrow ids")
+	.option("--kind <kinds...>", "comma-separated kinds to keep (e.g. tool_use,error)")
+	.option("--limit <n>", "stop after N events")
+	.option("--json", "force NDJSON output (default when not a TTY)")
+	.action(async (opts: EventsCommandOptions) => {
+		const db = await openCliDatabase();
+		const ac = new AbortController();
+		const onSig = () => ac.abort();
+		process.on("SIGINT", onSig);
+		process.on("SIGTERM", onSig);
+		try {
+			await runEventsCommand({
+				db,
+				options: opts,
+				stdout: process.stdout,
+				signal: ac.signal,
+				isTty: Boolean(process.stdout.isTTY),
+			});
+		} finally {
+			process.off("SIGINT", onSig);
+			process.off("SIGTERM", onSig);
 			db.close();
 		}
 	});
