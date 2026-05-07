@@ -22,5 +22,18 @@ export {
 	ValidationError,
 	WorkspaceMaterializationError,
 } from "./core/errors.ts";
-
+export { detectSshAgent, type SshAgentPassthrough } from "./git/ssh.ts";
 export { createLogger, type Logger } from "./logging/logger.ts";
+export { buildBwrapArgv, SYSTEM_RO_MOUNTS } from "./provider/local/bwrap.ts";
+export { type RunSandboxedOptions, runSandboxed } from "./provider/local/sandbox.ts";
+export {
+	buildSeatbeltArgv,
+	buildSeatbeltProfile,
+	SYSTEM_READ_SUBPATHS,
+} from "./provider/local/seatbelt.ts";
+export type {
+	NetworkPolicy,
+	SandboxProfile,
+	SpawnCommand,
+	SpawnResult,
+} from "./provider/types.ts";
