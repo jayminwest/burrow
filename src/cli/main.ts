@@ -129,7 +129,10 @@ program
 	.option("--branch <branch>", "branch to check out (defaults to burrow/<id>)")
 	.option("--base-branch <branch>", "branch to fork from (defaults to main)")
 	.option("--origin <url>", "git origin URL for fresh clones (no host clone present)")
-	.option("--network <policy>", "network policy: none | restricted | open", "none")
+	.option(
+		"--network <policy>",
+		"network policy: none | restricted | open (defaults to burrow.toml [sandbox].network, then 'none')",
+	)
 	.option("--provider <name>", "provider id (defaults to local)", "local")
 	.option("--json", "emit machine-readable JSON")
 	.action(async (opts: Record<string, string | boolean>) => {
