@@ -19,6 +19,7 @@ domains:
   secrets: {}
   toolchain: {}
   ship: {}
+  proxy: {}
 governance:
   max_entries: 100
   warn_entries: 150
