@@ -20,6 +20,7 @@ domains:
   toolchain: {}
   ship: {}
   proxy: {}
+  dashboard: {}
 governance:
   max_entries: 100
   warn_entries: 150
