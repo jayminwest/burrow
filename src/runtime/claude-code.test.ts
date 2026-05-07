@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BurrowRow, MessageRow, RunRow } from "../db/schema.ts";
 import {
+	CLAUDE_CODE_BURROW_TMPDIR,
 	CLAUDE_CODE_SETTINGS_PATH,
+	claudeCodeBurrowTmpdir,
 	claudeCodeHostCredentialPaths,
 	claudeCodeRuntime,
 	encodeClaudeStdin,
@@ -99,6 +101,32 @@ describe("claudeCodeRuntime.buildSpawnCommand", () => {
 		expect(blob.split("\n")).toHaveLength(1);
 		expect(blob).toContain("[STEERING]");
 	});
+
+	test("emits per-burrow TMPDIR pointing at .burrow-tmp under the in-sandbox workspace (burrow-8452)", () => {
+		const cmd = claudeCodeRuntime.buildSpawnCommand({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			prompt: "p",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/host/ws",
+		});
+		expect(cmd.env?.TMPDIR).toBe(claudeCodeBurrowTmpdir("/host/ws"));
+	});
+});
+
+describe("claudeCodeBurrowTmpdir", () => {
+	test("linux resolves under bwrap's /workspace remap, not the host path", () => {
+		expect(claudeCodeBurrowTmpdir("/host/ws", "linux")).toBe(
+			`/workspace/${CLAUDE_CODE_BURROW_TMPDIR}`,
+		);
+	});
+
+	test("darwin keeps the host workspace path (sandbox-exec doesn't remap)", () => {
+		expect(claudeCodeBurrowTmpdir("/Users/u/ws", "darwin")).toBe(
+			`/Users/u/ws/${CLAUDE_CODE_BURROW_TMPDIR}`,
+		);
+	});
 });
 
 describe("claudeCodeRuntime.buildResumeCommand", () => {
@@ -131,6 +159,23 @@ describe("claudeCodeRuntime.buildResumeCommand", () => {
 			workspacePath: "/ws",
 		});
 		expect(cmd?.argv).not.toContain("--resume");
+	});
+
+	test("resume spawns inherit the per-burrow TMPDIR (burrow-8452)", () => {
+		const cmd = claudeCodeRuntime.buildResumeCommand?.({
+			burrow: fakeBurrow(),
+			run: fakeRun({ id: "run_new" }),
+			priorRun: fakeRun({
+				id: "run_prior",
+				state: "succeeded",
+				metadataJson: { session_id: "sess-z" },
+			}),
+			prompt: "continue",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/host/ws",
+		});
+		expect(cmd?.env?.TMPDIR).toBe(claudeCodeBurrowTmpdir("/host/ws"));
 	});
 });
 
@@ -166,6 +211,18 @@ describe("claudeCodeRuntime.prepareWorkspace", () => {
 		const body = await readFile(join(dir, CLAUDE_CODE_SETTINGS_PATH), "utf8");
 		const parsed = JSON.parse(body);
 		expect(parsed).toMatchObject({ permissions: {}, hooks: {} });
+	});
+
+	test("plants .burrow-tmp/ + a `*` .gitignore (burrow-8452)", async () => {
+		await claudeCodeRuntime.prepareWorkspace?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		const fs = await import("node:fs");
+		const tmpDir = join(dir, CLAUDE_CODE_BURROW_TMPDIR);
+		expect(fs.statSync(tmpDir).isDirectory()).toBe(true);
+		expect(await readFile(join(tmpDir, ".gitignore"), "utf8")).toBe("*\n");
 	});
 });
 

@@ -8,10 +8,13 @@
  * into structured events.
  *
  * `prepareWorkspace` writes a minimal `.claude/settings.local.json` so the
- * agent has a stable settings file even when the project ships none and, when
- * the host is logged in (SPEC §17.4), forwards credentials into the burrow's
- * `.claude/` so the sandboxed agent finds them via HOME-relative lookup
- * without requiring a second `/login`. Source is platform-specific:
+ * agent has a stable settings file even when the project ships none, plants a
+ * private `.burrow-tmp/` for the spawn's `TMPDIR` (burrow-8452 — the host
+ * UID-keyed `/tmp/claude-${uid}/` root races every other claude-code on the
+ * machine during startup cleanup), and, when the host is logged in (SPEC
+ * §17.4), forwards credentials into the burrow's `.claude/` so the sandboxed
+ * agent finds them via HOME-relative lookup without requiring a second
+ * `/login`. Source is platform-specific:
  *   - linux: copy `~/.claude/.credentials.json` if present.
  *   - darwin: extract from the macOS Keychain (service `Claude Code-
  *     credentials`) and materialize as `.credentials.json`. The sandbox
@@ -39,6 +42,17 @@ import { runVersionCheck } from "./version.ts";
 const CLAUDE_BIN = "claude";
 
 export const CLAUDE_CODE_SETTINGS_PATH = ".claude/settings.local.json";
+
+/**
+ * Per-burrow TMPDIR root. claude-code's Bash tool stores command output under
+ * `${TMPDIR-/tmp}/claude-${uid}/...` and runs a startup cleanup sweep across
+ * the entire UID-keyed root — that races every other claude-code on the host
+ * (the user's terminal session, sibling burrows) and surfaces as
+ * `<bash output unavailable: ... could not be read (EPERM)>`. Pinning TMPDIR
+ * inside the workspace gives each burrowed claude a private sweep boundary
+ * (burrow-8452).
+ */
+export const CLAUDE_CODE_BURROW_TMPDIR = ".burrow-tmp";
 
 /** Auth file Claude Code writes when it can't reach the OS keychain. */
 const CLAUDE_CREDENTIALS_FILE = ".credentials.json";
@@ -152,6 +166,7 @@ export const claudeCodeRuntime: AgentRuntime = {
 				// prompt would deadlock a non-interactive spawn.
 				"--dangerously-skip-permissions",
 			],
+			env: { TMPDIR: claudeCodeBurrowTmpdir(ctx.workspacePath) },
 			stdin: encodeClaudeStdin(ctx.prompt, ctx.pendingMessages),
 		};
 	},
@@ -175,6 +190,7 @@ export const claudeCodeRuntime: AgentRuntime = {
 		if (sessionId) argv.push("--resume", sessionId);
 		return {
 			argv,
+			env: { TMPDIR: claudeCodeBurrowTmpdir(ctx.workspacePath) },
 			stdin: encodeClaudeStdin(ctx.prompt, ctx.pendingMessages),
 		};
 	},
@@ -195,6 +211,7 @@ export const claudeCodeRuntime: AgentRuntime = {
 			`${JSON.stringify(DEFAULT_SETTINGS, null, 2)}\n`,
 			{ encoding: "utf8", flag: "w" },
 		);
+		ensureBurrowTmpdir(ctx.workspacePath);
 		await forwardClaudeHostCredentials(ctx.workspacePath);
 	},
 
@@ -208,6 +225,32 @@ export const claudeCodeRuntime: AgentRuntime = {
 		});
 	},
 };
+
+/**
+ * Resolve the in-sandbox absolute path of the per-burrow TMPDIR. The runtime
+ * always shares a platform with the host that runs it (burrow can't host a
+ * Linux sandbox on macOS or vice versa), so `process.platform` is the right
+ * proxy for sandbox layout: bwrap remaps the workspace to `/workspace`,
+ * sandbox-exec leaves it at the host path. Exposed with a `plat` override for
+ * unit tests.
+ */
+export function claudeCodeBurrowTmpdir(
+	workspacePath: string,
+	plat: NodeJS.Platform = process.platform,
+): string {
+	const home = plat === "linux" ? "/workspace" : workspacePath;
+	return join(home, CLAUDE_CODE_BURROW_TMPDIR);
+}
+
+/**
+ * Materialize the per-burrow TMPDIR on the host and drop a `*` .gitignore so
+ * tool output never trips `git status` inside a project worktree.
+ */
+function ensureBurrowTmpdir(workspacePath: string): void {
+	const dir = join(workspacePath, CLAUDE_CODE_BURROW_TMPDIR);
+	mkdirSync(dir, { recursive: true });
+	writeFileSync(join(dir, ".gitignore"), "*\n", { encoding: "utf8", flag: "w" });
+}
 
 /**
  * Encode the run's prompt followed by any pending steering messages as a
