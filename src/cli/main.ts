@@ -56,6 +56,7 @@ import {
 	runSendCommand,
 	type SendCommandOptions,
 } from "./commands/send.ts";
+import { runShipCommand, type ShipCommandOptions, shipResultToJson } from "./commands/ship.ts";
 import { renderShowReport, runShowCommand, showResultToJson } from "./commands/show.ts";
 import { renderStopResult, runStopCommand } from "./commands/stop.ts";
 import { renderUpResult, runUpCommand } from "./commands/up.ts";
@@ -528,6 +529,42 @@ agents
 			process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 		} else {
 			process.stdout.write(`${renderAgentsAddResult(result)}\n`);
+		}
+	});
+
+program
+	.command("ship")
+	.description("build + deploy artifacts via the configured ShipTarget (fly | docker | tarball)")
+	.argument("[id]", "burrow id (defaults to project burrow at cwd, if any)")
+	.option("--target <name>", "override [ship].default_target — one of: fly, docker, tarball")
+	.option("--dry-run", "print the plan without invoking any side-effecting commands")
+	.option("--quiet", "only emit plan + final done line; suppress per-step output")
+	.option("--json", "force NDJSON output (default when stdout is not a TTY)")
+	.action(async (id: string | undefined, opts: ShipCommandOptions & { json?: boolean }) => {
+		const ac = makeAbortController();
+		try {
+			const shipOpts: ShipCommandOptions = {};
+			if (opts.target !== undefined) shipOpts.target = opts.target;
+			if (opts.dryRun !== undefined) shipOpts.dryRun = opts.dryRun;
+			if (opts.json !== undefined) shipOpts.json = opts.json;
+			if (opts.quiet !== undefined) shipOpts.quiet = opts.quiet;
+			await withClient(async (client) => {
+				const runInput: Parameters<typeof runShipCommand>[0] = {
+					client,
+					projectRoot: process.cwd(),
+					options: shipOpts,
+					stdout: process.stdout,
+					signal: ac.controller.signal,
+					isTty: Boolean(process.stdout.isTTY),
+				};
+				if (id !== undefined) runInput.burrowId = id;
+				const result = await runShipCommand(runInput);
+				if (opts.json) process.stdout.write(`${shipResultToJson(result)}\n`);
+				if (result.state === "failed") process.exit(4);
+				if (result.state === "cancelled") process.exit(1);
+			});
+		} finally {
+			ac.dispose();
 		}
 	});
 

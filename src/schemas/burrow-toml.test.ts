@@ -156,6 +156,94 @@ required = "not-an-array"
 	});
 });
 
+describe("parseBurrowToml — [ship]", () => {
+	test("accepts a tarball-only ship block", () => {
+		const res = parseBurrowToml(`
+[ship]
+default_target = "tarball"
+build = ["bun run build"]
+
+[ship.tarball]
+out_dir = "dist"
+include = ["dist", "package.json"]
+`);
+		expect(res.ok).toBe(true);
+		expect(res.config?.ship?.default_target).toBe("tarball");
+		expect(res.config?.ship?.build).toEqual(["bun run build"]);
+		expect(res.config?.ship?.tarball?.out_dir).toBe("dist");
+		expect(res.config?.ship?.tarball?.include).toEqual(["dist", "package.json"]);
+	});
+
+	test("accepts a docker-only ship block with build_args", () => {
+		const res = parseBurrowToml(`
+[ship]
+default_target = "docker"
+
+[ship.docker]
+image = "myorg/app"
+tag = "v1"
+dockerfile = "Dockerfile.prod"
+platforms = ["linux/amd64", "linux/arm64"]
+
+[ship.docker.build_args]
+NODE_ENV = "production"
+COMMIT_SHA = "deadbeef"
+`);
+		expect(res.ok).toBe(true);
+		expect(res.config?.ship?.docker?.image).toBe("myorg/app");
+		expect(res.config?.ship?.docker?.tag).toBe("v1");
+		expect(res.config?.ship?.docker?.platforms).toEqual(["linux/amd64", "linux/arm64"]);
+		expect(res.config?.ship?.docker?.build_args).toEqual({
+			NODE_ENV: "production",
+			COMMIT_SHA: "deadbeef",
+		});
+	});
+
+	test("accepts a fly block requiring app", () => {
+		const res = parseBurrowToml(`
+[ship.fly]
+app = "my-app"
+config = "fly.staging.toml"
+strategy = "rolling"
+`);
+		expect(res.ok).toBe(true);
+		expect(res.config?.ship?.fly?.app).toBe("my-app");
+	});
+
+	test("rejects an unknown default_target", () => {
+		const res = parseBurrowToml(`
+[ship]
+default_target = "render"
+`);
+		expect(res.ok).toBe(false);
+		expect(res.errors?.[0]?.path.join(".")).toContain("ship.default_target");
+	});
+
+	test("rejects unknown keys under [ship]", () => {
+		const res = parseBurrowToml(`
+[ship]
+mystery = true
+`);
+		expect(res.ok).toBe(false);
+	});
+
+	test("rejects [ship.docker] without image", () => {
+		const res = parseBurrowToml(`
+[ship.docker]
+tag = "latest"
+`);
+		expect(res.ok).toBe(false);
+	});
+
+	test("rejects [ship.fly] without app", () => {
+		const res = parseBurrowToml(`
+[ship.fly]
+config = "fly.toml"
+`);
+		expect(res.ok).toBe(false);
+	});
+});
+
 describe("normalizeToolchainSpec", () => {
 	test("string → uses key as binary name", () => {
 		expect(normalizeToolchainSpec("bun", "1.1")).toEqual({ version: "1.1", binary: "bun" });

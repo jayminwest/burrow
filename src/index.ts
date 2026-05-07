@@ -234,6 +234,11 @@ export {
 	type BurrowTomlParseError,
 	type BurrowTomlParseResult,
 	BurrowTomlSchema,
+	type BurrowTomlShip,
+	type BurrowTomlShipDocker,
+	type BurrowTomlShipFly,
+	type BurrowTomlShipTarball,
+	type BurrowTomlShipTarget,
 	type BurrowTomlToolchainMode,
 	type BurrowTomlToolchainSpec,
 	GIT_CREDENTIAL_KINDS,
@@ -242,6 +247,7 @@ export {
 	normalizeToolchainSpec,
 	parseBurrowToml,
 	parseBurrowTomlOrThrow,
+	SHIP_TARGETS,
 	TOOLCHAIN_MODES,
 } from "./schemas/burrow-toml.ts";
 export {
@@ -267,6 +273,28 @@ export {
 	type SecretStoreOptions,
 	type SecretStoreResult,
 } from "./secrets/store.ts";
+export {
+	BUILT_IN_SHIP_TARGETS,
+	buildDockerArgv,
+	buildFlyArgv,
+	defaultShipRegistry,
+	dockerShipTarget,
+	flyShipTarget,
+	probeBinary,
+	type ResolvedDockerPlan,
+	type ResolvedFlyPlan,
+	resolveDockerPlan,
+	resolveFlyPlan,
+	type ShipContext,
+	type ShipEvent,
+	type ShipInstallCheck,
+	type ShipPlan,
+	type ShipPlanStep,
+	ShipRegistry,
+	type ShipTarget,
+	streamLines,
+	tarballShipTarget,
+} from "./ship/index.ts";
 export {
 	type CheckToolchainsInput,
 	checkToolchains,

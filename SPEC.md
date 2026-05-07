@@ -880,7 +880,7 @@ burrow agents list
 burrow agents show <id>
 burrow agents validate <file>
 
-burrow ship [<id>] [--target fly|render|...] [--dry-run]
+burrow ship [<id>] [--target fly|docker|tarball|...] [--dry-run]
                                                # Build + deploy artifacts (uses provider).
 
 burrow config show
@@ -1125,8 +1125,8 @@ In-memory pub/sub. `burrow logs --follow`, `burrow events --follow`. NDJSON arch
 ### Phase 8 — `burrow.toml` + secrets + toolchain doctor (1-2 days)
 TOML parsing, schema validation, toolchain checks, secret resolution (env, file, op://), 1Password integration.
 
-### Phase 9 — `burrow ship` (1 day)
-Build + deploy: detects project type, runs declared build steps inside burrow, deploys artifact to declared target. V1 supports `fly` and `render` as the first two; the abstraction is a `ShipTarget` interface so adding more is mechanical.
+### Phase 9 — `burrow ship` (1-2 days)
+Build + deploy: detects project type, runs declared build steps inside burrow, deploys artifact to declared target. V1 supports three first-class `ShipTarget`s: `fly` (managed deploy), `docker` (build + tag an image — user-facing, not just fly's substrate; reusable for any registry or local handoff), and `tarball` (offline artifact: `./dist/<id>-<ts>.tar.gz`). Three targets stress-test the interface across shape (tarball: sync, no auth, no network), lifecycle (docker: streaming build events, long-running), and real-world deploy (fly composes the docker target). The abstraction is a `ShipTarget` interface so adding more is mechanical.
 
 ### Phase 10 — Polish (1-2 days)
 README, examples, error message review, branding compliance, completion shells.
@@ -1163,7 +1163,7 @@ These are explicitly designed *for* but not built *in* V1:
 - **`FlyProvider` (and friends).** Remote burrows on Fly machines. Same CLI, same APIs.
 - **`burrow snapshot` / `burrow restore`.** Versioned workspace snapshots for time-travel debugging.
 - **Toolchain auto-install (mise / asdf integration).** No manual host setup.
-- **`burrow ship` target plugins.** Additional deploy targets beyond fly/render.
+- **`burrow ship` target plugins.** Additional deploy targets beyond fly/docker/tarball.
 - **Substrate integration with Overstory and Mycelium.** Eventually, those tools dispatch agents into burrows instead of tmux. Burrow's CLI/API stays unchanged; consumption is purely additive.
 
 Pre-emptively *out of scope* even post-V1, unless the design changes:
@@ -1180,8 +1180,7 @@ Pre-emptively *out of scope* even post-V1, unless the design changes:
 These need a decision before or during early implementation:
 
 1. **Brand color.** Forest palette has open slots; pick a tone that reads "warm, contained, earthy."
-2. **`burrow ship` V1 targets.** Which two deploy targets ship first — fly + render, fly + vercel, fly + cloud-run? Driven by the user's own deploy patterns.
-3. **Network policy enforcement on Linux.** Userspace HTTP proxy vs. nftables rules. The latter is more correct; the former is more portable across distros. Probably ship userspace proxy first, nftables as opt-in.
-4. **Toolchain mounting.** Mount specific binary paths only, or the entire `$PATH` ancestry? The first is safer; the second is more compatible with toolchain shims (mise, asdf, fnm). V1 likely mounts the resolved binary plus its lib dir; full `$PATH` is opt-in via `burrow.toml: sandbox.toolchain_mode = "shim-aware"`.
-5. **Default `burrow up` behavior outside a project.** Refuse, prompt for `burrow init`, or create an "ephemeral scratch burrow" with no project context? Probably refuse + suggest `burrow init`.
-6. **`burrow chat` when an agent doesn't support spawn-per-turn.** Disabled command, or graceful "messages will queue for the next run"? The latter is friendlier.
+2. **Network policy enforcement on Linux.** Userspace HTTP proxy vs. nftables rules. The latter is more correct; the former is more portable across distros. Probably ship userspace proxy first, nftables as opt-in.
+3. **Toolchain mounting.** Mount specific binary paths only, or the entire `$PATH` ancestry? The first is safer; the second is more compatible with toolchain shims (mise, asdf, fnm). V1 likely mounts the resolved binary plus its lib dir; full `$PATH` is opt-in via `burrow.toml: sandbox.toolchain_mode = "shim-aware"`.
+4. **Default `burrow up` behavior outside a project.** Refuse, prompt for `burrow init`, or create an "ephemeral scratch burrow" with no project context? Probably refuse + suggest `burrow init`.
+5. **`burrow chat` when an agent doesn't support spawn-per-turn.** Disabled command, or graceful "messages will queue for the next run"? The latter is friendlier.

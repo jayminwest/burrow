@@ -1,0 +1,40 @@
+# burrow.toml — project contract for the Burrow sandbox runtime.
+# See SPEC §17 for the full schema. Every field is optional.
+
+[project]
+name = "burrow"
+default_branch = "main"
+
+[sandbox]
+network = "restricted"   # one of: none | restricted | open
+allowed_domains = [
+  "registry.npmjs.org",
+  "github.com",
+  "api.anthropic.com",
+]
+timeout_minutes = 60
+
+[toolchain]
+bun = ">=1.1"
+node = ">=20"
+
+[env]
+# required = ["DATABASE_URL"]   # burrow up fails until these resolve
+# optional = ["SENTRY_DSN"]     # missing optionals are silently dropped
+
+# [secrets]
+# DATABASE_URL = "op://Engineering/web-app-dev/db_url"   # 1Password ref
+# STRIPE_SECRET_KEY = "literal-fallback"                # plain literal
+
+[git]
+identity = "user"                # user | bot
+read_only_main_branch = true     # block pushes to default_branch
+credentials = "ssh-agent"        # ssh-agent | managed-key | token
+
+# Agents declared for this project. Built-ins (claude-code, sapling, codex)
+# are auto-registered; an explicit entry pins the choice and lets you patch
+# defaults without forking the runtime.
+
+[[agents]]
+id = "claude-code"
+# Built-in runtime — registered automatically. Patch settings here.

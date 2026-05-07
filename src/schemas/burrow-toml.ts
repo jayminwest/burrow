@@ -72,6 +72,52 @@ const HooksSchema = z
 	})
 	.strict();
 
+export const SHIP_TARGETS = ["tarball", "docker", "fly"] as const;
+export type BurrowTomlShipTarget = (typeof SHIP_TARGETS)[number];
+
+const ShipTarballSchema = z
+	.object({
+		out_dir: z.string().min(1).optional(),
+		out: z.string().min(1).optional(),
+		include: z.array(z.string().min(1)).optional(),
+	})
+	.strict();
+
+const ShipDockerSchema = z
+	.object({
+		image: z.string().min(1),
+		tag: z.string().min(1).optional(),
+		dockerfile: z.string().min(1).optional(),
+		context: z.string().min(1).optional(),
+		platforms: z.array(z.string().min(1)).optional(),
+		build_args: z.record(z.string().min(1), z.string()).optional(),
+	})
+	.strict();
+
+const ShipFlySchema = z
+	.object({
+		app: z.string().min(1),
+		config: z.string().min(1).optional(),
+		strategy: z.string().min(1).optional(),
+		region: z.string().min(1).optional(),
+	})
+	.strict();
+
+const ShipSchema = z
+	.object({
+		default_target: z.enum(SHIP_TARGETS).optional(),
+		build: z.array(z.string().min(1)).optional(),
+		tarball: ShipTarballSchema.optional(),
+		docker: ShipDockerSchema.optional(),
+		fly: ShipFlySchema.optional(),
+	})
+	.strict();
+
+export type BurrowTomlShip = z.infer<typeof ShipSchema>;
+export type BurrowTomlShipTarball = z.infer<typeof ShipTarballSchema>;
+export type BurrowTomlShipDocker = z.infer<typeof ShipDockerSchema>;
+export type BurrowTomlShipFly = z.infer<typeof ShipFlySchema>;
+
 /**
  * Per-toolchain version spec. Either a bare version string ("20", ">=1.1"),
  * or a richer object so callers can also pin the binary name explicitly.
@@ -109,6 +155,7 @@ export const BurrowTomlSchema = z
 		git: GitSchema.optional(),
 		hooks: HooksSchema.optional(),
 		agents: z.array(BurrowTomlAgentSchema).optional(),
+		ship: ShipSchema.optional(),
 	})
 	.strict();
 
