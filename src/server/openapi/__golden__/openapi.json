@@ -1,0 +1,1884 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "burrow serve",
+    "version": "0.0.0-test",
+    "description": "HTTP API for the burrow runtime. Routes mirror the in-process `Client` namespaces 1:1 so the Library API stays the source of truth. Streaming surfaces (`/burrows/{id}/events`, `/runs/{id}/stream`, `/watch`) emit NDJSON over chunked HTTP byte-for-byte equal to the matching `--json` CLI output.",
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:4040",
+      "description": "localhost TCP (opt-in via `burrow serve --port`)"
+    }
+  ],
+  "components": {
+    "schemas": {
+      "AgentDetail": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "displayName": {
+            "type": "string"
+          },
+          "supportsResume": {
+            "type": "boolean"
+          },
+          "spawnPerTurn": {
+            "type": "boolean"
+          },
+          "install": {
+            "$ref": "#/components/schemas/InstallCheckResult"
+          }
+        },
+        "required": [
+          "id",
+          "displayName",
+          "supportsResume",
+          "spawnPerTurn",
+          "install"
+        ],
+        "additionalProperties": false
+      },
+      "ArchiveBurrowResult": {
+        "type": "object",
+        "properties": {
+          "burrowId": {
+            "type": "string"
+          },
+          "directory": {
+            "type": "string"
+          },
+          "eventsPath": {
+            "type": "string"
+          },
+          "messagesPath": {
+            "type": "string"
+          },
+          "runsPath": {
+            "type": "string"
+          },
+          "eventCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "messageCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "runCount": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "burrowId",
+          "directory",
+          "eventsPath",
+          "messagesPath",
+          "runsPath",
+          "eventCount",
+          "messageCount",
+          "runCount"
+        ],
+        "additionalProperties": false
+      },
+      "Burrow": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "project",
+              "task"
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "projectRoot": {
+            "type": "string"
+          },
+          "workspacePath": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "providerStateJson": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "profileJson": {},
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "stopped",
+              "destroyed"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "destroyedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO-8601 timestamp with millisecond precision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "parentId",
+          "kind",
+          "name",
+          "projectRoot",
+          "workspacePath",
+          "branch",
+          "provider",
+          "providerStateJson",
+          "profileJson",
+          "state",
+          "createdAt",
+          "updatedAt",
+          "destroyedAt"
+        ],
+        "additionalProperties": false
+      },
+      "BurrowCard": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "project",
+              "task"
+            ]
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "active",
+              "stopped",
+              "destroyed"
+            ]
+          },
+          "projectRoot": {
+            "type": "string"
+          },
+          "workspacePath": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "updatedAt": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "destroyedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO-8601 timestamp with millisecond precision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RunSummary"
+            }
+          },
+          "activeRun": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RunSummary"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "eventTail": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EventTailEntry"
+            }
+          },
+          "lastEventSeq": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "parentId",
+          "kind",
+          "name",
+          "state",
+          "projectRoot",
+          "workspacePath",
+          "branch",
+          "provider",
+          "createdAt",
+          "updatedAt",
+          "destroyedAt",
+          "runs",
+          "activeRun",
+          "eventTail",
+          "lastEventSeq"
+        ],
+        "additionalProperties": false
+      },
+      "CreateRunBody": {
+        "type": "object",
+        "properties": {
+          "agentId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prompt": {
+            "type": "string",
+            "minLength": 1
+          },
+          "metadata": {}
+        },
+        "required": [
+          "agentId",
+          "prompt"
+        ],
+        "additionalProperties": false
+      },
+      "DashboardSnapshot": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "snapshot"
+          },
+          "version": {
+            "type": "number",
+            "const": 1
+          },
+          "ts": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "burrows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BurrowCard"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "version",
+          "ts",
+          "burrows"
+        ],
+        "additionalProperties": false
+      },
+      "DestroyBurrowResult": {
+        "type": "object",
+        "properties": {
+          "burrowId": {
+            "type": "string"
+          },
+          "archived": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ArchiveBurrowResult"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deletedEvents": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "deletedMessages": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "deletedRuns": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "required": [
+          "burrowId",
+          "archived",
+          "deletedEvents",
+          "deletedMessages",
+          "deletedRuns"
+        ],
+        "additionalProperties": false
+      },
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "hint": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      },
+      "EventEnvelope": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "const": "event"
+          },
+          "ts": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "burrowId": {
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "kind": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string",
+            "enum": [
+              "stdout",
+              "stderr",
+              "system"
+            ]
+          },
+          "payload": {}
+        },
+        "required": [
+          "type",
+          "ts",
+          "burrowId",
+          "runId",
+          "seq",
+          "kind",
+          "stream",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "EventTailEntry": {
+        "type": "object",
+        "properties": {
+          "burrowId": {
+            "type": "string"
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "kind": {
+            "type": "string"
+          },
+          "stream": {
+            "type": "string",
+            "enum": [
+              "stdout",
+              "stderr",
+              "system"
+            ]
+          },
+          "ts": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "payload": {}
+        },
+        "required": [
+          "burrowId",
+          "runId",
+          "seq",
+          "kind",
+          "stream",
+          "ts",
+          "payload"
+        ],
+        "additionalProperties": false
+      },
+      "HealthResponse": {
+        "type": "object",
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "additionalProperties": false
+      },
+      "InstallCheckResult": {
+        "type": "object",
+        "properties": {
+          "installed": {
+            "type": "boolean"
+          },
+          "version": {
+            "type": "string"
+          },
+          "hint": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "installed"
+        ],
+        "additionalProperties": false
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "burrowId": {
+            "type": "string"
+          },
+          "fromActor": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "unread",
+              "delivered",
+              "failed"
+            ]
+          },
+          "deliveredAtRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "deliveredAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO-8601 timestamp with millisecond precision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "burrowId",
+          "fromActor",
+          "body",
+          "priority",
+          "state",
+          "deliveredAtRunId",
+          "createdAt",
+          "deliveredAt"
+        ],
+        "additionalProperties": false
+      },
+      "Run": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "burrowId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "resumeOfRunId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "exitCode": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "metadataJson": {
+            "anyOf": [
+              {},
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queuedAt": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO-8601 timestamp with millisecond precision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO-8601 timestamp with millisecond precision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "burrowId",
+          "agentId",
+          "prompt",
+          "resumeOfRunId",
+          "state",
+          "exitCode",
+          "errorMessage",
+          "metadataJson",
+          "queuedAt",
+          "startedAt",
+          "completedAt"
+        ],
+        "additionalProperties": false
+      },
+      "RunSummary": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "burrowId": {
+            "type": "string"
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "exitCode": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "errorMessage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "queuedAt": {
+            "type": "string",
+            "description": "ISO-8601 timestamp with millisecond precision"
+          },
+          "startedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO-8601 timestamp with millisecond precision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completedAt": {
+            "anyOf": [
+              {
+                "type": "string",
+                "description": "ISO-8601 timestamp with millisecond precision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "burrowId",
+          "agentId",
+          "state",
+          "exitCode",
+          "errorMessage",
+          "queuedAt",
+          "startedAt",
+          "completedAt"
+        ],
+        "additionalProperties": false
+      },
+      "SendInboxBody": {
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string",
+            "minLength": 1
+          },
+          "priority": {
+            "type": "string",
+            "enum": [
+              "low",
+              "normal",
+              "high",
+              "urgent"
+            ]
+          },
+          "fromActor": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Bearer token from `BURROW_API_TOKEN`. `--no-auth` mode disables auth on the server side; clients still need to omit the header."
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "meta",
+      "description": "Health and self-description."
+    },
+    {
+      "name": "burrows",
+      "description": "Burrows namespace (SPEC §15.1)."
+    },
+    {
+      "name": "runs",
+      "description": "Runs namespace (SPEC §15.2)."
+    },
+    {
+      "name": "inbox",
+      "description": "Inbox namespace (SPEC §15.3)."
+    },
+    {
+      "name": "events",
+      "description": "Events namespace (SPEC §15.4)."
+    },
+    {
+      "name": "agents",
+      "description": "Agents namespace (SPEC §15.5)."
+    },
+    {
+      "name": "dashboard",
+      "description": "Dashboard view-model (SPEC §26)."
+    },
+    {
+      "name": "streams",
+      "description": "NDJSON-over-chunked-HTTP surfaces."
+    }
+  ],
+  "paths": {
+    "/agents": {
+      "get": {
+        "operationId": "listAgents",
+        "summary": "List registered agent runtimes with install status.",
+        "tags": [
+          "agents"
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of agent details.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/AgentDetail"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/agents/{id}": {
+      "get": {
+        "operationId": "getAgent",
+        "summary": "Get one agent runtime detail.",
+        "tags": [
+          "agents"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "description": "Agent runtime id (e.g. `claude-code`, `sapling`)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agent detail.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentDetail"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/burrows": {
+      "get": {
+        "operationId": "listBurrows",
+        "summary": "List burrows. Filterable by kind / state / projectRoot.",
+        "tags": [
+          "burrows"
+        ],
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "project",
+                "task"
+              ]
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "active",
+                "stopped",
+                "destroyed"
+              ]
+            }
+          },
+          {
+            "name": "projectRoot",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of matching burrows.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Burrow"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error envelope (`validation_error on bad query param`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createBurrow",
+        "summary": "Create a burrow. NOT IMPLEMENTED in V1 — `Client.burrows.create` doesn't exist yet; use `burrow up` from a project root or the lower-level repo APIs. Returns 501.",
+        "tags": [
+          "burrows"
+        ],
+        "responses": {
+          "501": {
+            "description": "Error envelope (`not_implemented`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/burrows/{id}": {
+      "get": {
+        "operationId": "getBurrow",
+        "summary": "Get a burrow by id.",
+        "tags": [
+          "burrows"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The burrow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Burrow"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "destroyBurrow",
+        "summary": "Archive (optional) and delete a burrow's rows. Workspace teardown is the caller's responsibility.",
+        "tags": [
+          "burrows"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          },
+          {
+            "name": "archive",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "When false, skip the events/messages/runs export."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archive + delete result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DestroyBurrowResult"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/burrows/{id}/events": {
+      "get": {
+        "operationId": "eventsTail",
+        "summary": "Tail per-burrow events as NDJSON over chunked HTTP. Wire bytes match `burrow events --json` exactly.",
+        "tags": [
+          "events",
+          "streams"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          },
+          {
+            "name": "follow",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            },
+            "description": "When true (default), keep the connection open and live-tail; when false, drain current rows and close. Accepts `true`/`false` or `1`/`0`."
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Emit only events with `seq > since`. Non-negative integer."
+          },
+          {
+            "name": "kinds",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated list of event kinds to include. Repeated `?kinds=` parameters merge."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Maximum rows to return; positive integer."
+          },
+          {
+            "name": "pollIntervalMs",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Override the live-tail poll interval (ms)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newline-delimited `EventEnvelope` records (one per line).",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventEnvelope"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error envelope (`validation_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/burrows/{id}/inbox": {
+      "get": {
+        "operationId": "listInbox",
+        "summary": "List inbox messages for one burrow.",
+        "tags": [
+          "inbox"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "unread",
+                "delivered",
+                "failed"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of messages.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Message"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "sendInbox",
+        "summary": "Enqueue a steering message.",
+        "tags": [
+          "inbox"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendInboxBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The enqueued message.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error envelope (`validation_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/burrows/{id}/resume": {
+      "post": {
+        "operationId": "resumeBurrow",
+        "summary": "Transition the burrow to `active` (stopped → active).",
+        "tags": [
+          "burrows"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated burrow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Burrow"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/burrows/{id}/runs": {
+      "get": {
+        "operationId": "listRunsByBurrow",
+        "summary": "List runs for one burrow, newest first.",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Maximum rows to return; positive integer."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Array of runs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Run"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createRun",
+        "summary": "Enqueue a run. Returns 201 with the queued `Run`.",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateRunBody"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The enqueued run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error envelope (`validation_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/burrows/{id}/stop": {
+      "post": {
+        "operationId": "stopBurrow",
+        "summary": "Transition the burrow to `stopped` (active → stopped).",
+        "tags": [
+          "burrows"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^bur_"
+            },
+            "required": true,
+            "description": "Burrow id, e.g. `bur_a3f9`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated burrow.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Burrow"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "health",
+        "summary": "Liveness probe. Auth-exempt; returns `{ ok: true }` whenever the server is reachable.",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "Server is healthy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/messages/{id}": {
+      "delete": {
+        "operationId": "cancelMessage",
+        "summary": "Drop an undelivered message. 204 on success.",
+        "tags": [
+          "inbox"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "description": "Message id."
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Message cancelled."
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/openapi.html": {
+      "get": {
+        "operationId": "openApiHtml",
+        "summary": "Render this spec in a browser via Scalar API Reference. Auth-exempt for human exploration; the spec it renders comes from `/openapi.json` which IS auth-required.",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "HTML page that loads `/openapi.json` into a documentation UI."
+          }
+        },
+        "security": []
+      }
+    },
+    "/openapi.json": {
+      "get": {
+        "operationId": "openApiJson",
+        "summary": "Return this OpenAPI 3.1 document. Auth-required (same posture as the rest of the API).",
+        "tags": [
+          "meta"
+        ],
+        "responses": {
+          "200": {
+            "description": "OpenAPI 3.1 document describing the burrow serve API.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}": {
+      "get": {
+        "operationId": "getRun",
+        "summary": "Get a run by id.",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^run_"
+            },
+            "required": true,
+            "description": "Run id, e.g. `run_2c4d`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}/cancel": {
+      "post": {
+        "operationId": "cancelRun",
+        "summary": "Mark the run cancelled. Idempotent if already terminal.",
+        "tags": [
+          "runs"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^run_"
+            },
+            "required": true,
+            "description": "Run id, e.g. `run_2c4d`."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The updated run.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Run"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/runs/{id}/stream": {
+      "get": {
+        "operationId": "runStream",
+        "summary": "Tail one run's events as NDJSON over chunked HTTP. Always follows; consumers stop via `?limit=N` or by cancelling the request.",
+        "tags": [
+          "runs",
+          "streams"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "pattern": "^run_"
+            },
+            "required": true,
+            "description": "Run id, e.g. `run_2c4d`."
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Maximum rows to return; positive integer."
+          },
+          {
+            "name": "pollIntervalMs",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Override the live-tail poll interval (ms)."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newline-delimited `EventEnvelope` records (one per line).",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventEnvelope"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Error envelope (`not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/watch": {
+      "get": {
+        "operationId": "watch",
+        "summary": "Stream `DashboardSnapshot` records as NDJSON. Wire bytes match `burrow watch --json` exactly (SPEC §26.5).",
+        "tags": [
+          "dashboard",
+          "streams"
+        ],
+        "parameters": [
+          {
+            "name": "once",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "description": "Emit a single snapshot then close."
+          },
+          {
+            "name": "coalesceMs",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "pollIntervalMs",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Override the live-tail poll interval (ms)."
+          },
+          {
+            "name": "runsLimit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1
+            }
+          },
+          {
+            "name": "eventTailCap",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newline-delimited `DashboardSnapshot` records (one per line).",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "$ref": "#/components/schemas/DashboardSnapshot"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Error envelope (`validation_error`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

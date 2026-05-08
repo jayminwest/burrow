@@ -125,6 +125,8 @@ for await (const evt of client.events.tail({ burrowId: burrows[0].id })) {
 
 Bearer auth from `BURROW_API_TOKEN` is required by default; `--no-auth` bypasses for loopback-only use. Single-user posture — multi-user is an explicit non-goal. See [SPEC §27](SPEC.md#27-http-api-burrow-serve) and `sd plan show pl-5b40` for the full design.
 
+The server self-describes via an OpenAPI 3.1 document at `GET /openapi.json` (auth-required) so external consumers can codegen typed clients without hand-rolling against the wire format. Point a browser at `GET /openapi.html` (auth-exempt) for a Scalar-rendered API reference.
+
 ## Linux dev container
 
 Linux is burrow's canonical isolation target — the deploy target is a Linux container running `bwrap`. macOS contributors can exercise that exact path locally via the Docker-based dev container under [`.devcontainer/`](.devcontainer):

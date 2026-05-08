@@ -25,9 +25,12 @@ type ServeServer = ReturnType<typeof Bun.serve>;
 
 /**
  * Pathnames exempt from auth. Liveness probes can't authenticate, and the
- * health endpoint reveals nothing sensitive (just `{ ok: true }`).
+ * health endpoint reveals nothing sensitive (just `{ ok: true }`). The
+ * OpenAPI HTML viewer (burrow-d3ea) is also exempt so a human can land on
+ * it without a token; the actual spec at `/openapi.json` IS auth-required,
+ * which is the layer that protects the route shape.
  */
-const AUTH_EXEMPT_PATHS = new Set<string>(["/healthz"]);
+const AUTH_EXEMPT_PATHS = new Set<string>(["/healthz", "/openapi.html"]);
 
 const DEFAULT_TRANSPORT: Transport = { kind: "tcp", hostname: "127.0.0.1", port: 0 };
 

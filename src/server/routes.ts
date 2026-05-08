@@ -19,6 +19,7 @@
 import type { Client } from "../lib/client.ts";
 import { notImplemented } from "./errors.ts";
 import { handlerFor } from "./handlers.ts";
+import { openApiHtmlHandler, openApiJsonHandler } from "./openapi/handlers.ts";
 import { jsonResponse } from "./response.ts";
 import type { Route, RouteHandler } from "./types.ts";
 
@@ -48,17 +49,31 @@ export function buildRoutes(client: Client | null): Route[] {
  * concrete response so a serving process can be liveness-probed without a
  * token. Wired here in step 1 since it's the one route that doesn't depend
  * on the Library API.
+ *
+ * `/openapi.json` and `/openapi.html` (burrow-d3ea) are stitched on at the
+ * same level — they don't need a `Client` either, so they're folded into
+ * the same out-of-band route list rather than the mirrored CRUD table.
  */
-const healthRoutes: readonly Route[] = [
+const metaRoutes: readonly Route[] = [
 	{
 		method: "GET",
 		pattern: "/healthz",
 		handler: () => jsonResponse(200, { ok: true }),
 	},
+	{
+		method: "GET",
+		pattern: "/openapi.json",
+		handler: openApiJsonHandler,
+	},
+	{
+		method: "GET",
+		pattern: "/openapi.html",
+		handler: openApiHtmlHandler,
+	},
 ];
 
 export function buildRoutesWithHealth(client: Client | null): Route[] {
-	return [...healthRoutes, ...buildRoutes(client)];
+	return [...metaRoutes, ...buildRoutes(client)];
 }
 
 interface RouteEntry {

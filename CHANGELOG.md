@@ -32,6 +32,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   future UIs) can swap transports without touching call sites or
   `instanceof` checks. Re-exported from `@os-eco/burrow-cli` alongside
   `HttpClientOptions` and the `Transport` discriminated union.
+- **OpenAPI 3.1 self-description (`burrow-d3ea`).** `burrow serve` now
+  exposes `GET /openapi.json` (auth-required) describing every route
+  and response shape, plus an unauthenticated `GET /openapi.html`
+  rendering the spec via Scalar API Reference for browser exploration.
+  The document is built from a single Zod schema registry
+  (`src/server/openapi/schemas.ts`) using Zod 4's native
+  `z.toJSONSchema` — no extra runtime dependency. Output bytes are
+  locked by a golden file (`__golden__/openapi.json`,
+  mx-1785cc pattern) so any drift in the wire shape is a deliberate,
+  reviewable diff. Lets warren and any future external consumer
+  codegen typed clients instead of hand-rolling against the surface.
 
 ## [0.2.0] - 2026-05-08
 
