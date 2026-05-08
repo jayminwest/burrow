@@ -286,6 +286,87 @@ describe("server handlers", () => {
 		expect(body.state).toBe("cancelled");
 	});
 
+	test("POST /runs/:id/cancel records the optional reason", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		const res = await fetch(`${handle.url}/runs/${run.id}/cancel`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ reason: "warren rolled the deploy back" }),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as Run;
+		expect(body.state).toBe("cancelled");
+		expect(body.errorMessage).toBe("warren rolled the deploy back");
+	});
+
+	test("POST /runs/:id/cancel emits a run_cancelled event on the stream", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		await fetch(`${handle.url}/runs/${run.id}/cancel`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ reason: "user-requested" }),
+		});
+		const events = client.repos.events.listByBurrow(burrow.id);
+		const cancel = events.find((e) => e.kind === "run_cancelled");
+		expect(cancel).toBeDefined();
+		expect(cancel?.runId).toBe(run.id);
+		expect(cancel?.payloadJson).toEqual({ reason: "user-requested" });
+	});
+
+	test("POST /runs/:id/cancel is idempotent on terminal runs", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		const first = await fetch(`${handle.url}/runs/${run.id}/cancel`, { method: "POST" });
+		expect(first.status).toBe(200);
+		const second = await fetch(`${handle.url}/runs/${run.id}/cancel`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ reason: "second call ignored" }),
+		});
+		expect(second.status).toBe(200);
+		const body = (await second.json()) as Run;
+		expect(body.state).toBe("cancelled");
+		// Idempotent: the original cancel reason wins; second cancel doesn't
+		// re-stamp the row or emit a second event.
+		expect(body.errorMessage).toBe("cancelled via Client.runs.cancel");
+		const cancelEvents = client.repos.events
+			.listByBurrow(burrow.id)
+			.filter((e) => e.kind === "run_cancelled");
+		expect(cancelEvents).toHaveLength(1);
+	});
+
+	test("POST /runs/:id/cancel for unknown id → 404", async () => {
+		const res = await fetch(`${handle.url}/runs/run_nope/cancel`, { method: "POST" });
+		expect(res.status).toBe(404);
+	});
+
+	test("DELETE /runs/:id removes a terminal run row (204)", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		client.runs.cancel(run.id);
+		const res = await fetch(`${handle.url}/runs/${run.id}`, { method: "DELETE" });
+		expect(res.status).toBe(204);
+		expect(client.runs.tryGet(run.id)).toBeNull();
+	});
+
+	test("DELETE /runs/:id rejects a non-terminal run (400)", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		const res = await fetch(`${handle.url}/runs/${run.id}`, { method: "DELETE" });
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string } };
+		expect(body.error.code).toBe("validation_error");
+		// Row still present.
+		expect(client.runs.tryGet(run.id)?.id).toBe(run.id);
+	});
+
+	test("DELETE /runs/:id for unknown id → 404", async () => {
+		const res = await fetch(`${handle.url}/runs/run_nope`, { method: "DELETE" });
+		expect(res.status).toBe(404);
+	});
+
 	/* ------------------------------------------------------------------- */
 	/* Inbox                                                               */
 	/* ------------------------------------------------------------------- */

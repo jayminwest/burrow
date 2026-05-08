@@ -272,6 +272,18 @@ export const CreateRunBodySchema = component(
 	}),
 );
 
+export const CancelRunBodySchema = component(
+	"CancelRunBody",
+	z.object({
+		reason: z
+			.string()
+			.optional()
+			.describe(
+				"Free-form note recorded on the run's `errorMessage` and emitted in the `run_cancelled` event payload. Optional — POSTs with no body cancel without a reason.",
+			),
+	}),
+);
+
 export const SendInboxBodySchema = component(
 	"SendInboxBody",
 	z.object({

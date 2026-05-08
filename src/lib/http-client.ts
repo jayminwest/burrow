@@ -365,12 +365,25 @@ export class HttpRunsClient {
 		return rows.map(reviveRun);
 	}
 
-	async cancel(id: string): Promise<Run> {
+	async cancel(id: string, opts: { reason?: string } = {}): Promise<Run> {
 		const row = await this.transport.request<unknown>({
 			method: "POST",
 			path: `/runs/${encodeURIComponent(id)}/cancel`,
+			...(opts.reason !== undefined ? { jsonBody: { reason: opts.reason } } : {}),
 		});
 		return reviveRun(row);
+	}
+
+	/**
+	 * Hard-delete a terminal run row (mirrors `Client.runs.delete`). Throws
+	 * `ValidationError` if the run is still in flight; throws `NotFoundError`
+	 * for an unknown id. 204 on success — nothing returned.
+	 */
+	async delete(id: string): Promise<void> {
+		await this.transport.request<undefined>({
+			method: "DELETE",
+			path: `/runs/${encodeURIComponent(id)}`,
+		});
 	}
 
 	stream(id: string, opts: HttpRunStreamOptions = {}): AsyncGenerator<RunEvent, void, void> {

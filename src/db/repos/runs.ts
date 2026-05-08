@@ -16,7 +16,7 @@ import {
 	type RunState,
 } from "../../core/state-machine.ts";
 import type { DrizzleDb } from "../client.ts";
-import { type RunRow, runs } from "../schema.ts";
+import { events, type RunRow, runs } from "../schema.ts";
 
 export interface EnqueueRunInput {
 	id?: string;
@@ -151,5 +151,20 @@ export class RunsRepo {
 	/** Useful for tests: runs that have been finalized (any terminal). */
 	listTerminal(): RunRow[] {
 		return this.listByState([...RUN_TERMINAL_STATES] as RunState[]);
+	}
+
+	/**
+	 * Hard-delete a run row plus the events that referenced it (the
+	 * `events.run_id` foreign key would otherwise block the delete).
+	 * Atomic: SQLite's single-writer model + the explicit transaction
+	 * guarantee a partial delete can't strand events behind a removed run.
+	 * Callers must pre-check terminal state — the repo only enforces FK
+	 * cleanup, not state semantics.
+	 */
+	delete(id: string): void {
+		this.db.transaction((tx) => {
+			tx.delete(events).where(eq(events.runId, id)).run();
+			tx.delete(runs).where(eq(runs.id, id)).run();
+		});
 	}
 }

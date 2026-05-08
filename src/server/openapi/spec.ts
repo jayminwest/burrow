@@ -18,6 +18,7 @@ import { VERSION } from "../../index.ts";
 import {
 	AgentDetailSchema,
 	BurrowSchema,
+	CancelRunBodySchema,
 	CreateBurrowBodySchema,
 	CreateRunBodySchema,
 	componentRegistry,
@@ -41,7 +42,7 @@ interface OperationDef {
 	summary: string;
 	tags: readonly string[];
 	parameters?: readonly ParameterDef[];
-	requestBody?: { schemaName: string; description?: string };
+	requestBody?: { schemaName: string; description?: string; required?: boolean };
 	responses: Record<string, ResponseDef>;
 	authRequired?: boolean;
 }
@@ -388,15 +389,40 @@ const OPERATIONS: readonly PathOperation[] = [
 		pattern: "/runs/{id}/cancel",
 		op: {
 			operationId: "cancelRun",
-			summary: "Mark the run cancelled. Idempotent if already terminal.",
+			summary:
+				"Graceful cancel. Transitions a `queued`/`running` run to `cancelled`, records the optional `reason` on `errorMessage`, and emits a `run_cancelled` event on the run's stream so subscribers see the trigger. Idempotent on already-terminal runs (returns the current row with 200, not 4xx) so callers can safely retry.",
 			tags: ["runs"],
 			parameters: [runIdParam],
+			requestBody: {
+				schemaName: "CancelRunBody",
+				required: false,
+				description:
+					"Optional. Bare POST with no body is accepted; `{reason}` is recorded on the run + cancel event when provided.",
+			},
 			responses: {
 				"200": {
-					description: "The updated run.",
+					description:
+						"The run after cancel — current row when already terminal, freshly-cancelled row otherwise.",
 					contentType: "application/json",
 					schemaName: "Run",
 				},
+				"400": errorResponse("validation_error on malformed body"),
+				"404": errorResponse("not_found"),
+			},
+		},
+	},
+	{
+		method: "delete",
+		pattern: "/runs/{id}",
+		op: {
+			operationId: "deleteRun",
+			summary:
+				"Remove a finished run row from the database (record removal). Distinct from `POST /runs/{id}/cancel` — this is post-completion cleanup, not a state transition. Only allowed when the run is in a terminal state (`succeeded`/`failed`/`cancelled`); 400 if the run is still `queued`/`running` (cancel it first). Cascades to the run's events (the `events.run_id` foreign key would otherwise block the delete); the burrow-level event history shrinks by the deleted run's tail. Returns 204 No Content on success.",
+			tags: ["runs"],
+			parameters: [runIdParam],
+			responses: {
+				"204": { description: "Run row removed." },
+				"400": errorResponse("validation_error when run is non-terminal"),
 				"404": errorResponse("not_found"),
 			},
 		},
@@ -677,6 +703,7 @@ function registrySources(): readonly z.ZodType[] {
 		HealthResponseSchema,
 		CreateBurrowBodySchema,
 		CreateRunBodySchema,
+		CancelRunBodySchema,
 		SendInboxBodySchema,
 	];
 }
@@ -701,7 +728,7 @@ function renderOperation(op: OperationDef): Record<string, unknown> {
 	}
 	if (op.requestBody) {
 		out.requestBody = {
-			required: true,
+			required: op.requestBody.required ?? true,
 			content: {
 				"application/json": {
 					schema: { $ref: `${COMPONENT_REF_BASE}/${op.requestBody.schemaName}` },

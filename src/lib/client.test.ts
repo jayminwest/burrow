@@ -113,6 +113,96 @@ describe("Client", () => {
 		expect(finalized.state).toBe("cancelled");
 	});
 
+	test("runs.cancel records the optional reason and emits one event", () => {
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/r",
+			workspacePath: "/r/.ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "claude-code",
+			prompt: "hi",
+		});
+		const finalized = client.runs.cancel(run.id, { reason: "operator-aborted" });
+		expect(finalized.state).toBe("cancelled");
+		expect(finalized.errorMessage).toBe("operator-aborted");
+		const events = client.repos.events
+			.listByBurrow(burrow.id)
+			.filter((e) => e.kind === "run_cancelled");
+		expect(events).toHaveLength(1);
+		expect(events[0]?.payloadJson).toEqual({ reason: "operator-aborted" });
+	});
+
+	test("runs.cancel is idempotent on terminal runs", () => {
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/r",
+			workspacePath: "/r/.ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "claude-code",
+			prompt: "hi",
+		});
+		client.runs.cancel(run.id, { reason: "first" });
+		// Already-terminal: returns the same row, doesn't re-emit.
+		const second = client.runs.cancel(run.id, { reason: "second-ignored" });
+		expect(second.state).toBe("cancelled");
+		expect(second.errorMessage).toBe("first");
+		const events = client.repos.events
+			.listByBurrow(burrow.id)
+			.filter((e) => e.kind === "run_cancelled");
+		expect(events).toHaveLength(1);
+	});
+
+	test("runs.delete removes a terminal run row", () => {
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/r",
+			workspacePath: "/r/.ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "claude-code",
+			prompt: "hi",
+		});
+		client.runs.cancel(run.id);
+		client.runs.delete(run.id);
+		expect(client.runs.tryGet(run.id)).toBeNull();
+	});
+
+	test("runs.delete refuses non-terminal runs", () => {
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/r",
+			workspacePath: "/r/.ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "claude-code",
+			prompt: "hi",
+		});
+		expect(() => client.runs.delete(run.id)).toThrow(ValidationError);
+		expect(client.runs.tryGet(run.id)?.id).toBe(run.id);
+	});
+
+	test("runs.delete throws NotFoundError for unknown ids", () => {
+		expect(() => client.runs.delete("run_nope")).toThrow(NotFoundError);
+	});
+
 	test("inbox.send rejects empty body", () => {
 		const burrow = client.repos.burrows.create({
 			kind: "project",

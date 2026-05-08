@@ -74,6 +74,29 @@ async function readJsonBody(ctx: RouteContext): Promise<Record<string, unknown>>
 	return parsed as Record<string, unknown>;
 }
 
+/**
+ * Variant of `readJsonBody` for endpoints whose body is optional (e.g.
+ * `POST /runs/:id/cancel` accepts a bare POST or `{reason}`). Returns
+ * `null` when the request has no body, otherwise behaves like
+ * `readJsonBody` (still 400 on malformed JSON / non-object payloads).
+ */
+async function readJsonBodyOrEmpty(ctx: RouteContext): Promise<Record<string, unknown> | null> {
+	const raw = await ctx.request.text();
+	if (raw.length === 0) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (err) {
+		throw new ValidationError(
+			`request body must be JSON: ${err instanceof Error ? err.message : String(err)}`,
+		);
+	}
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		throw new ValidationError("request body must be a JSON object");
+	}
+	return parsed as Record<string, unknown>;
+}
+
 function requireString(body: Record<string, unknown>, key: string): string {
 	const value = body[key];
 	if (typeof value !== "string" || value.length === 0) {
@@ -292,10 +315,40 @@ function getRun(client: Client): RouteHandler {
 	};
 }
 
+/**
+ * `POST /runs/:id/cancel` — graceful cancellation. Body is optional; when
+ * present, accepts `{reason?: string}` which lands in the run's
+ * `errorMessage` and the emitted `run_cancelled` event payload. Idempotent:
+ * a run that's already terminal (succeeded/failed/cancelled) returns its
+ * current row with status 200, not a 4xx — callers can retry without
+ * special-casing.
+ */
 function cancelRun(client: Client): RouteHandler {
+	return async (ctx) => {
+		const id = requireParam(ctx, "id");
+		const opts: { reason?: string } = {};
+		const body = await readJsonBodyOrEmpty(ctx);
+		if (body !== null) {
+			const reason = optionalString(body, "reason");
+			if (reason !== undefined) opts.reason = reason;
+		}
+		return jsonResponse(200, client.runs.cancel(id, opts));
+	};
+}
+
+/**
+ * `DELETE /runs/:id` — record removal post-completion. Hard-deletes the
+ * run row, but only when the run is in a terminal state (callers should
+ * `POST /runs/:id/cancel` first if the run is still in flight). Returns
+ * 204 No Content on success; 400 if the run is non-terminal; 404 if the
+ * id doesn't exist. Distinct from `POST /cancel` (state transition) — this
+ * endpoint is for cleanup of finished runs.
+ */
+function deleteRun(client: Client): RouteHandler {
 	return (ctx) => {
 		const id = requireParam(ctx, "id");
-		return jsonResponse(200, client.runs.cancel(id));
+		client.runs.delete(id);
+		return new Response(null, { status: 204 });
 	};
 }
 
@@ -621,6 +674,8 @@ export function handlerFor(client: Client, method: string, pattern: string): Rou
 			return createRun(client);
 		case "GET /runs/:id":
 			return getRun(client);
+		case "DELETE /runs/:id":
+			return deleteRun(client);
 		case "POST /runs/:id/cancel":
 			return cancelRun(client);
 		case "GET /burrows/:id/inbox":

@@ -220,6 +220,37 @@ describe("HttpClient (TCP transport)", () => {
 		expect(cancelled.state).toBe("cancelled");
 	});
 
+	test("runs.cancel forwards the optional reason", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		const cancelled = await http.runs.cancel(run.id, { reason: "deploy rolled back" });
+		expect(cancelled.state).toBe("cancelled");
+		expect(cancelled.errorMessage).toBe("deploy rolled back");
+	});
+
+	test("runs.cancel is idempotent over HTTP", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		await http.runs.cancel(run.id);
+		const second = await http.runs.cancel(run.id);
+		expect(second.state).toBe("cancelled");
+	});
+
+	test("runs.delete removes a terminal run", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		await http.runs.cancel(run.id);
+		await http.runs.delete(run.id);
+		expect(client.runs.tryGet(run.id)).toBeNull();
+	});
+
+	test("runs.delete on non-terminal run throws ValidationError", async () => {
+		const burrow = seedBurrow(client);
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "mock-agent", prompt: "x" });
+		await expect(http.runs.delete(run.id)).rejects.toBeInstanceOf(ValidationError);
+		expect(client.runs.tryGet(run.id)?.id).toBe(run.id);
+	});
+
 	test("runs.tryGet returns null for unknown id", async () => {
 		expect(await http.runs.tryGet("run_nope")).toBeNull();
 	});

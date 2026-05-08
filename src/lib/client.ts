@@ -21,6 +21,7 @@
 import { runUpCommand, type UpCommandInput } from "../cli/commands/up.ts";
 import { resolvePaths } from "../config/paths.ts";
 import { ValidationError } from "../core/errors.ts";
+import { RUN_TERMINAL_STATES } from "../core/state-machine.ts";
 import type {
 	Burrow,
 	BurrowKind,
@@ -36,6 +37,7 @@ import { type BurrowDb, openDatabase } from "../db/client.ts";
 import { createRepos, type Repos } from "../db/repos/index.ts";
 import { type DestroyBurrowResult, destroyBurrowStorage } from "../events/destroy.ts";
 import { type TailAllOptions, type TailOptions, tailAll, tailBurrow } from "../events/poll.ts";
+import { appendAndPublish } from "../events/publish.ts";
 import { EventBus, type Subscription } from "../events/tail.ts";
 import { Inbox } from "../inbox/inbox.ts";
 import { createLogger, type Logger } from "../logging/logger.ts";
@@ -213,7 +215,10 @@ export class BurrowsClient {
  * Runs namespace (SPEC §15.2).
  */
 export class RunsClient {
-	constructor(private readonly repos: Repos) {}
+	constructor(
+		private readonly repos: Repos,
+		private readonly bus: EventBus,
+	) {}
 
 	create(input: RunCreateInput): Run {
 		this.repos.burrows.require(input.burrowId);
@@ -243,11 +248,49 @@ export class RunsClient {
 		return this.repos.runs.listTerminal();
 	}
 
-	cancel(id: string): Run {
-		return this.repos.runs.finalize(id, {
+	/**
+	 * Graceful cancel (SPEC §15.2). Idempotent on already-terminal runs:
+	 * returns the current row without re-finalizing or re-emitting an event,
+	 * so callers can retry without worrying about state. The optional
+	 * `reason` lands in `errorMessage` (when transitioning) and as the
+	 * payload of the emitted `run_cancelled` event so consumers tailing
+	 * `/runs/:id/stream` can correlate the cancel with its trigger.
+	 */
+	cancel(id: string, opts: { reason?: string } = {}): Run {
+		const current = this.repos.runs.require(id);
+		if (RUN_TERMINAL_STATES.has(current.state)) return current;
+		const reason = opts.reason;
+		const finalized = this.repos.runs.finalize(id, {
 			state: "cancelled",
-			errorMessage: "cancelled via Client.runs.cancel",
+			errorMessage: reason ?? "cancelled via Client.runs.cancel",
 		});
+		appendAndPublish({
+			repo: this.repos.events,
+			bus: this.bus,
+			burrowId: finalized.burrowId,
+			runId: finalized.id,
+			kind: "run_cancelled",
+			stream: "system",
+			payload: { reason: reason ?? null },
+		});
+		return finalized;
+	}
+
+	/**
+	 * Hard-delete a run row. Only allowed when the run is in a terminal
+	 * state (`succeeded`/`failed`/`cancelled`); throws `ValidationError` for
+	 * `queued`/`running` to keep an in-flight row from being silently
+	 * orphaned. Throws `NotFoundError` if no run with that id exists. Use
+	 * `cancel()` first to terminate, then `delete()` to remove.
+	 */
+	delete(id: string): void {
+		const current = this.repos.runs.require(id);
+		if (!RUN_TERMINAL_STATES.has(current.state)) {
+			throw new ValidationError(`run ${id} is ${current.state}; cancel it before deleting`, {
+				recoveryHint: "POST /runs/:id/cancel transitions a run to terminal first",
+			});
+		}
+		this.repos.runs.delete(id);
 	}
 
 	/**
@@ -417,7 +460,7 @@ export class Client {
 		readonly logger: Logger,
 	) {
 		this.burrows = new BurrowsClient(this, repos);
-		this.runs = new RunsClient(repos);
+		this.runs = new RunsClient(repos, bus);
 		this.inbox = new InboxClient(repos);
 		this.events = new EventsClient(repos, bus);
 		this.agents = new AgentsClient(registry);
