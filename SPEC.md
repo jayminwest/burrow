@@ -1184,3 +1184,89 @@ These need a decision before or during early implementation:
 3. **Toolchain mounting.** Mount specific binary paths only, or the entire `$PATH` ancestry? The first is safer; the second is more compatible with toolchain shims (mise, asdf, fnm). V1 likely mounts the resolved binary plus its lib dir; full `$PATH` is opt-in via `burrow.toml: sandbox.toolchain_mode = "shim-aware"`.
 4. **Default `burrow up` behavior outside a project.** Refuse, prompt for `burrow init`, or create an "ephemeral scratch burrow" with no project context? Probably refuse + suggest `burrow init`.
 5. **`burrow chat` when an agent doesn't support spawn-per-turn.** Disabled command, or graceful "messages will queue for the next run"? The latter is friendlier.
+
+---
+
+## 26. Dashboard view model
+
+`burrow watch` is the first post-V1 feature (§24) and the forcing function for the wire shape that a future `burrow serve` will WebSocket-stream to a browser frontend. Both faces consume the same envelope: a self-contained `DashboardSnapshot` produced by a pure builder over `Repos`. Building the contract now keeps `burrow serve` a thin adapter later instead of a rewrite, and gives `burrow watch --json` an immediate machine-readable mode that scripts and CI can consume.
+
+### 26.1 Snapshot envelope (NDJSON, line-delimited)
+
+```jsonc
+{
+  "type": "snapshot",
+  "version": 1,
+  "ts": "2026-05-07T19:00:00.000Z",
+  "burrows": [
+    {
+      "id": "bur_a3f9",
+      "parentId": null,
+      "kind": "project",
+      "name": "web-app",
+      "state": "running",
+      "projectRoot": "/home/user/projects/web-app",
+      "workspacePath": "/home/user/.local/share/burrow/sessions/bur_a3f9/workspace",
+      "branch": "main",
+      "provider": "local",
+      "createdAt": "2026-05-07T18:42:00.000Z",
+      "updatedAt": "2026-05-07T18:59:58.000Z",
+      "destroyedAt": null,
+      "runs": [ /* RunSummary[], newest-first, capped (default 20) */ ],
+      "activeRun": { /* RunSummary | null — running else queued */ },
+      "eventTail": [ /* EventTailEntry[], oldest-first, capped (default 500) */ ],
+      "lastEventSeq": 1287
+    }
+  ]
+}
+```
+
+`burrow watch --json` emits one `DashboardSnapshot` per coalesced wake — exactly the shape `burrow serve` will eventually push over WebSocket.
+
+### 26.2 Additive-only versioning (the lock)
+
+Same discipline as the §14.1 event envelope:
+
+1. **Existing keys never change semantics or types.** Renaming or re-typing a field is breaking.
+2. **New keys may be added.** Consumers MUST ignore unknown top-level keys and unknown fields on `BurrowCard` / `RunSummary` / `EventTailEntry`.
+3. **`version` only bumps on a breaking change.** A v1 consumer reading a v1 snapshot with extra fields must keep working.
+4. **Optional fields stay optional forever.** Promoting an optional field to required is breaking.
+5. **Enum members may be added; existing members never change.** Consumers MUST treat unknown `state` / `kind` / `stream` values as pass-through strings rather than crashing.
+
+The companion test (`src/dashboard/types.test.ts`) pins the canonical key set per interface — any field rename or removal trips the test, forcing an intentional `version` bump.
+
+### 26.3 Library surface
+
+Re-exported from `@os-eco/burrow-cli`:
+
+```ts
+import {
+  buildSnapshot,
+  streamSnapshots,
+  DASHBOARD_SNAPSHOT_VERSION,
+  DEFAULT_EVENT_TAIL_CAP,
+  DEFAULT_RUNS_PER_CARD,
+  DEFAULT_COALESCE_MS,
+  DEFAULT_POLL_FALLBACK_MS,
+  type DashboardSnapshot,
+  type BurrowCard,
+  type RunSummary,
+  type EventTailEntry,
+  type BuildSnapshotOptions,
+  type StreamSnapshotsOptions,
+} from '@os-eco/burrow-cli';
+```
+
+`buildSnapshot(repos, opts?)` is pure: same `Repos` state ⇒ same `DashboardSnapshot` (modulo the envelope `ts`, which can be pinned via `opts.now` for tests). `streamSnapshots(repos, bus, opts?)` is an async generator that wakes on `EventBus.subscribeAll` pushes plus a polling fallback (default 1s, for burrow/run lifecycle changes that don't traverse the bus), coalesces wakes through a trailing-edge window (default 100ms), and yields one snapshot per closed window. Tear-down is leak-free: bus subscription, polling timer, and abort listener are all released in a single `finally` block.
+
+### 26.4 Trim and cap
+
+Snapshots are best-effort live state, not a replay log. The SQLite event store remains the source of truth for full replay (§14.3).
+
+- `BurrowCard.runs` — capped (default 20, newest-first). `Run.prompt` and `Run.metadataJson` are dropped from `RunSummary` to keep the wire small; re-add as new optional fields if a consumer ever needs them — additive, no `version` bump.
+- `BurrowCard.eventTail` — capped (default 500, oldest-first within the window). `lastEventSeq` lets a reconnecting consumer (a future web UI) replay missed events from `events.seq > lastEventSeq`.
+- `BurrowCard.activeRun` — derived: most recent `running` run, falling back to most recent `queued` run, else `null`.
+
+### 26.5 `burrow serve` forward-compat
+
+When `burrow serve` lands (§24, second post-V1 feature), it consumes `streamSnapshots()` directly and broadcasts each yielded `DashboardSnapshot` over a WebSocket frame. The wire shape is identical to `burrow watch --json` so a single client library can target both. Until then, `burrow watch --json` is the canonical reference for the envelope; any `burrow serve` redesign that breaks `watch --json` is a breaking change and bumps `version`.

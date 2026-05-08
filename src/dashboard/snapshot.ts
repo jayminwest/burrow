@@ -1,5 +1,5 @@
 /**
- * Pure builder for {@link DashboardSnapshot} (SPEC §27 — forthcoming).
+ * Pure builder for {@link DashboardSnapshot} (SPEC §26).
  *
  * `buildSnapshot(repos)` is the load-bearing seam between the durable domain
  * (rows in SQLite) and the dashboard view-model that the TUI today and
@@ -7,7 +7,7 @@
  * pure projection over `Repos`: same inputs ⇒ same output (modulo the
  * snapshot timestamp, which the caller can pin via `options.now` for tests).
  *
- * Per SPEC §27 the projection trims and caps:
+ * Per SPEC §26.4 the projection trims and caps:
  *
  *   - Each {@link BurrowCard} carries up to {@link DEFAULT_RUNS_PER_CARD}
  *     runs (newest-first), enough for the renderer to show recent history

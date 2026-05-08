@@ -1,5 +1,5 @@
 /**
- * Live snapshot stream for the dashboard view-model (SPEC §27 — forthcoming).
+ * Live snapshot stream for the dashboard view-model (SPEC §26).
  *
  * `streamSnapshots(repos, bus, opts)` is the load-bearing seam between the
  * durable `Repos` state and the live TUI / `burrow watch --json` consumer.

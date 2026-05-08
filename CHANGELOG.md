@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-08
+
+### Added
+
+- **`burrow watch` — TUI dashboard.** Multi-burrow live view (header / burrow
+  list / detail pane / keybind footer); raw-mode keypress dispatch (q to quit,
+  j/k to move, enter to focus a burrow, esc back, PgUp/PgDn for detail
+  scroll); SIGWINCH-debounced redraw; clean alt-screen entry/exit on SIGINT.
+  `burrow watch --json` emits NDJSON `DashboardSnapshot` envelopes — the same
+  wire shape `burrow serve` will eventually WebSocket-stream — so scripts and
+  CI can consume the live view today.
+- **Dashboard view-model (SPEC §26).** Public `DashboardSnapshot` /
+  `BurrowCard` / `RunSummary` / `EventTailEntry` types, additive-only
+  versioning lock (mirrors §14.1 events), and pure builder/streamer:
+  `buildSnapshot(repos, opts?)` (deterministic projection over `Repos`) and
+  `streamSnapshots(repos, bus, opts?)` (event-bus driven async generator with
+  trailing-edge coalescing, polling fallback for non-bus state changes, and
+  leak-free teardown). Re-exported from `@os-eco/burrow-cli` alongside
+  `DASHBOARD_SNAPSHOT_VERSION`, `DEFAULT_EVENT_TAIL_CAP`,
+  `DEFAULT_RUNS_PER_CARD`, `DEFAULT_COALESCE_MS`, `DEFAULT_POLL_FALLBACK_MS`.
+- **`[sandbox].read_only_paths` in `burrow.toml`.** Generic per-project
+  read-only mount escape hatch on top of the toolchain-bin-dir symlink walk
+  (burrow-a1b1).
+
 ### Fixed
 
 - **Globally-installed bun packages reachable inside burrow.** When `bun` is
@@ -15,6 +39,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `~/.bun/bin/` (e.g. `ml`, `sd`, `cn`, `ov`, `sapling`) were visible by
   name but their `.ts` source targets in the install root were sandbox-denied,
   manifesting as `error loading current directory` (burrow-aa46).
+- **Symmetric read+write on macOS sandbox temp roots.** seatbelt profile now
+  grants `file-read*` on `/private/tmp` + `/private/var/folders` alongside
+  the existing `file-write*`, and explicitly permits `file-write*` on
+  `/dev/null` (burrow-8452).
+- **Per-burrow `TMPDIR` for `claude-code` agents.** Bash-tool output under
+  `${TMPDIR}/claude-${uid}/...` now isolates per burrow instead of colliding
+  on a UID-keyed shared root (burrow-8452).
+- **`claude-code` runtime spawns with `--dangerously-skip-permissions`** —
+  burrow's `bwrap` / `sandbox-exec` profile is the actual enforcement
+  boundary, so claude-code's own permission gate is redundant noise inside
+  the sandbox.
 
 ## [0.1.0] - 2026-05-07
 
@@ -99,5 +134,6 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/jayminwest/burrow/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jayminwest/burrow/releases/tag/v0.1.0

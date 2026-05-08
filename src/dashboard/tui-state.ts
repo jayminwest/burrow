@@ -1,5 +1,5 @@
 /**
- * Pure view-state reducer for the `burrow watch` TUI (SPEC §27 — forthcoming).
+ * Pure view-state reducer for the `burrow watch` TUI (SPEC §26).
  *
  * The TUI runtime (`src/dashboard/tui.ts`) is the only impure piece of the
  * dashboard stack: it owns the alt-screen entry/exit, raw-mode stdin, resize

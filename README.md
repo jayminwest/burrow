@@ -79,6 +79,7 @@ burrow chat <id>                         # interactive REPL — one stdin line p
 
 burrow logs <id> [--follow]              # one burrow's event log
 burrow events [--follow]                 # every active burrow, interleaved
+burrow watch [--json]                    # multi-burrow TUI dashboard (NDJSON snapshots with --json)
 
 burrow agents list / show / validate / add
 burrow ship [<id>] --target tarball|docker|fly

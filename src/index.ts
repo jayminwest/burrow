@@ -5,7 +5,7 @@
  * and consumes the same surface a programmatic caller would.
  */
 
-export const VERSION = "0.1.0";
+export const VERSION = "0.2.0";
 
 export {
 	BURROW_TOML_FILENAME,
@@ -49,6 +49,26 @@ export {
 	type RunEvent,
 	type RunState,
 } from "./core/types.ts";
+export {
+	type BuildSnapshotOptions,
+	buildSnapshot,
+	DEFAULT_RUNS_PER_CARD,
+} from "./dashboard/snapshot.ts";
+export {
+	DEFAULT_COALESCE_MS,
+	DEFAULT_POLL_FALLBACK_MS,
+	type StreamSnapshotsOptions,
+	streamSnapshots,
+} from "./dashboard/stream.ts";
+export {
+	type BurrowCard,
+	DASHBOARD_SNAPSHOT_VERSION,
+	type DashboardSnapshot,
+	type DashboardSnapshotVersion,
+	DEFAULT_EVENT_TAIL_CAP,
+	type EventTailEntry,
+	type RunSummary,
+} from "./dashboard/types.ts";
 export { type BurrowDb, type OpenDatabaseOptions, openDatabase } from "./db/client.ts";
 export {
 	CRASH_ERROR_MESSAGE,

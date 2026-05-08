@@ -1,6 +1,6 @@
 /**
- * Lock test for the DashboardSnapshot view-model envelope (SPEC §27 —
- * forthcoming, see ../dashboard/types.ts JSDoc). The envelope is
+ * Lock test for the DashboardSnapshot view-model envelope (SPEC §26,
+ * see ../dashboard/types.ts JSDoc). The envelope is
  * additive-only: this test pins the canonical key set per interface so
  * any rename or removal trips the test, forcing an intentional
  * `DASHBOARD_SNAPSHOT_VERSION` bump.

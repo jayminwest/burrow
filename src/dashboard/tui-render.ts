@@ -1,5 +1,5 @@
 /**
- * Pure renderer for the `burrow watch` TUI dashboard (SPEC §27 — forthcoming).
+ * Pure renderer for the `burrow watch` TUI dashboard (SPEC §26).
  *
  * `renderSnapshot(snapshot, viewState, termSize)` returns the next frame as a
  * single string of `\n`-joined lines. The renderer is the *pure* leaf of the

@@ -1,9 +1,8 @@
 /**
- * Dashboard view-model (post-V1 SPEC §27 — to be locked when burrow watch
- * lands). The view-model is the load-bearing seam between the TUI today and
- * `burrow serve` / web UI tomorrow: both faces consume the same
- * `DashboardSnapshot` shape, so building the contract now keeps the future
- * web frontend a thin wrapper instead of a rewrite.
+ * Dashboard view-model (SPEC §26). The view-model is the load-bearing seam
+ * between the TUI today and `burrow serve` / web UI tomorrow: both faces
+ * consume the same `DashboardSnapshot` shape, so building the contract now
+ * keeps the future web frontend a thin wrapper instead of a rewrite.
  *
  * ### Wire shape
  *
@@ -47,7 +46,7 @@
  * The dashboard view-model is a *projection* of that domain shaped for
  * presentation: derived state (`activeRun`), trimmed payloads
  * (`EventTailEntry` omits the row id), and a capped tail
- * (`eventTail`, default 500 entries — see SPEC §27 risks). Keeping the
+ * (`eventTail`, default 500 entries — see SPEC §26.4). Keeping the
  * projection in its own module avoids leaking presentation concerns into
  * the core types and lets `burrow serve` grow alongside it.
  */

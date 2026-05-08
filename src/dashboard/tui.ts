@@ -1,5 +1,5 @@
 /**
- * TUI runtime for `burrow watch` (SPEC §27 — forthcoming).
+ * TUI runtime for `burrow watch` (SPEC §26).
  *
  * This is the only impure piece of the dashboard stack: it owns alt-screen
  * entry/exit, raw-mode stdin, the SIGWINCH resize listener, and the snapshot
