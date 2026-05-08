@@ -7,8 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-05-08
+
 ### Fixed
 
+- **`DELETE /burrows/:id` now tears down workspace + branch (`burrow-a79f`).**
+  Pre-fix the HTTP delete archived the row but skipped workspace
+  teardown, leaking worktrees and `burrow/<id>` branches on disk. The
+  per-id orchestration (stop → remove workspace → archive+prune) now
+  lives in a shared `src/lib/destroy.ts:destroyBurrowFully` helper so
+  `bw destroy` and `BurrowsClient.destroy` (HTTP `DELETE`) funnel
+  through identical cleanup. Regression test seam:
+  `BurrowsClient.setDestroyOverrides`.
 - **`/watch` query-param grammar uniform with other streaming routes
   (`burrow-130a`).** `?once=` now accepts `1`/`0` in addition to
   `true`/`false` (matching the SPEC §27 doc and `?follow=` on
@@ -35,6 +45,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SIGINT shuts down cleanly within 1s. Resolves plan `pl-5b40` (parent
   seed `burrow-1d64`); SPEC §3.2's "No HTTP API server in V1" non-goal
   is removed.
+- **`POST /burrows` provisioning landed (`burrow-4767`).** Replaces
+  the prior 501 stub with a real handler that calls a new
+  `client.burrows.up()` wrapping `runUpCommand`; mirrored on
+  `HttpClient.burrows.up`. Tests inject materializer / `skipDoctor` via
+  a server-side-only `BurrowsClient.setUpOverrides` seam (not exposed
+  on the wire). Unblocks warren provisioning over HTTP.
+- **Run cancellation + record removal (`burrow-6739`).**
+  `POST /runs/:id/cancel` is graceful + idempotent: accepts an optional
+  `{reason}` body, returns the current row with 200 on already-terminal
+  runs (never 4xx), and emits a `run_cancelled` event on the run's
+  stream. `DELETE /runs/:id` is post-completion record removal — only
+  legal on terminal runs (400 otherwise), 204 on success, cascades to
+  `events.run_id` rows so the FK doesn't block the delete. Distinct
+  from cancel so warren can separate "stop this run" from "purge this
+  row."
 - **`HttpClient` (`src/lib/http-client.ts`).** HTTP-backed mirror of
   `Client` with the same five namespaces (burrows / runs / inbox /
   events / agents) and identical method shapes. Rehydrates `Date`
@@ -182,6 +207,7 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/jayminwest/burrow/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jayminwest/burrow/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/jayminwest/burrow/releases/tag/v0.1.0
