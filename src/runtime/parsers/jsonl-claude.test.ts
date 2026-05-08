@@ -73,4 +73,46 @@ describe("parseJsonlClaude", () => {
 		expect(events[0]?.kind).toBe("state_change");
 		expect(events[0]?.stream).toBe("system");
 	});
+
+	test("rate_limit_event envelope becomes a telemetry event on the system stream", () => {
+		const line = JSON.stringify({
+			type: "rate_limit_event",
+			rate_limit_info: {
+				type: "anthropic_session",
+				resets_at: "2026-05-08T20:00:00Z",
+			},
+		});
+		const events = parseJsonlClaude(line);
+		expect(events).toHaveLength(1);
+		expect(events[0]?.kind).toBe("telemetry");
+		expect(events[0]?.stream).toBe("system");
+		expect(events[0]?.payload).toMatchObject({ type: "rate_limit_event" });
+	});
+
+	test("empty-text thinking blocks are dropped; non-empty siblings still emit", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			message: {
+				role: "assistant",
+				content: [
+					{ type: "thinking", thinking: "" },
+					{ type: "text", text: "after" },
+				],
+			},
+		});
+		const events = parseJsonlClaude(line);
+		expect(events.map((e) => e.kind)).toEqual(["text"]);
+		expect(events[0]?.payload).toEqual({ text: "after" });
+	});
+
+	test("empty-text thinking-only assistant message yields zero events", () => {
+		const line = JSON.stringify({
+			type: "assistant",
+			message: {
+				role: "assistant",
+				content: [{ type: "thinking", thinking: "" }],
+			},
+		});
+		expect(parseJsonlClaude(line)).toEqual([]);
+	});
 });
