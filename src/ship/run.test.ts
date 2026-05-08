@@ -77,13 +77,17 @@ describe("runStep", () => {
 	});
 
 	test("AbortSignal kills the in-flight child", async () => {
+		// Spawn `sleep` directly (no `sh -c` wrapper). On Linux with dash,
+		// `sh -c "sleep 5"` keeps `sh` as the parent of `sleep`, so SIGTERM
+		// to `sh` orphans `sleep` which holds the stdout/stderr pipes open
+		// until it exits — the stream-drain loop then blocks for 5s.
 		const ac = new AbortController();
 		setTimeout(() => ac.abort(), 50);
 		let endSeen = false;
 		for await (const evt of runStep({
 			index: 0,
 			description: "sleep",
-			command: ["sh", "-c", "sleep 5"],
+			command: ["sleep", "5"],
 			signal: ac.signal,
 		})) {
 			if (evt.kind === "step.end") endSeen = true;

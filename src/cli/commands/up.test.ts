@@ -53,6 +53,7 @@ describe("runUpCommand", () => {
 			projectRoot: "/repos/web-app",
 			options: { name: "web", branch: "feature/x" },
 			materializer: fakeMaterializer,
+			skipDoctor: true,
 		});
 		expect(result.burrow.kind).toBe("project");
 		expect(result.burrow.name).toBe("web");
@@ -74,6 +75,7 @@ describe("runUpCommand", () => {
 			projectRoot: "/repos/web-app",
 			options: {},
 			materializer: fakeMaterializer,
+			skipDoctor: true,
 		});
 		expect(result.burrow.branch.startsWith("burrow/")).toBe(true);
 	});
@@ -84,6 +86,7 @@ describe("runUpCommand", () => {
 			projectRoot: "/repos/web-app",
 			options: {},
 			materializer: fakeMaterializer,
+			skipDoctor: true,
 		});
 		const profile = result.burrow.profileJson as { network: string; toolchainPaths: unknown[] };
 		expect(profile.network).toBe("none");
@@ -96,6 +99,7 @@ describe("runUpCommand", () => {
 			projectRoot: "/repos/web-app",
 			options: {},
 			materializer: fakeMaterializer,
+			skipDoctor: true,
 		});
 		const out = renderUpResult(result);
 		expect(out).toContain("up");
