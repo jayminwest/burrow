@@ -151,6 +151,7 @@ export {
 } from "./inbox/injector.ts";
 export {
 	AgentsClient,
+	type BurrowDestroyOverrides,
 	type BurrowListFilter,
 	BurrowsClient,
 	type BurrowUpInput,
@@ -166,6 +167,11 @@ export {
 	type RunListFilter,
 	RunsClient,
 } from "./lib/client.ts";
+export {
+	type DestroyBurrowFullyOptions,
+	type DestroyBurrowFullyOutcome,
+	destroyBurrowFully,
+} from "./lib/destroy.ts";
 export {
 	type HttpAgentDetail,
 	type HttpAgentSummary,

@@ -158,6 +158,28 @@ describe("server handlers", () => {
 		expect(row?.state).toBe("destroyed");
 	});
 
+	test("DELETE /burrows/:id removes the workspace (burrow-a79f)", async () => {
+		// Pre-fix the API path archived the row but skipped workspace teardown,
+		// leaking worktrees + branches. Verify the cleanup hook now fires.
+		const burrow = seedBurrow(client, {
+			providerState: {
+				workspaceSource: { kind: "worktree", branch: "burrow/x", hostClonePath: "/host" },
+			},
+		});
+		const removed: Array<{ workspacePath: string; branch: string }> = [];
+		client.burrows.setDestroyOverrides({
+			removeWorkspace: async (opts) => {
+				removed.push({ workspacePath: opts.workspacePath, branch: opts.source.branch });
+			},
+		});
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}?archive=false`, {
+			method: "DELETE",
+		});
+		expect(res.status).toBe(200);
+		expect(removed).toEqual([{ workspacePath: burrow.workspacePath, branch: "burrow/x" }]);
+		expect(client.burrows.tryGet(burrow.id)?.state).toBe("destroyed");
+	});
+
 	test("POST /burrows provisions a project burrow (201)", async () => {
 		const projectRoot = mkTmp();
 		client.burrows.setUpOverrides({

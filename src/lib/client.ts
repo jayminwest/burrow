@@ -35,16 +35,18 @@ import type {
 } from "../core/types.ts";
 import { type BurrowDb, openDatabase } from "../db/client.ts";
 import { createRepos, type Repos } from "../db/repos/index.ts";
-import { type DestroyBurrowResult, destroyBurrowStorage } from "../events/destroy.ts";
+import type { DestroyBurrowResult } from "../events/destroy.ts";
 import { type TailAllOptions, type TailOptions, tailAll, tailBurrow } from "../events/poll.ts";
 import { appendAndPublish } from "../events/publish.ts";
 import { EventBus, type Subscription } from "../events/tail.ts";
 import { Inbox } from "../inbox/inbox.ts";
 import { createLogger, type Logger } from "../logging/logger.ts";
+import type { RemoveWorkspaceOptions } from "../provider/local/workspace.ts";
 import type { NetworkPolicy } from "../provider/types.ts";
 import { AgentRegistry } from "../runtime/registry.ts";
 import type { AgentRuntime } from "../runtime/runtime.ts";
 import type { AgentConfig } from "../schemas/agent-config.ts";
+import { destroyBurrowFully } from "./destroy.ts";
 
 export interface ClientOpenOptions {
 	dataDir?: string;
@@ -112,6 +114,16 @@ export interface BurrowUpInput {
  */
 export type BurrowUpOverrides = Omit<UpCommandInput, "client" | "projectRoot" | "options">;
 
+/**
+ * Test seam forwarded into `destroyBurrowFully`. Production callers leave
+ * this unset — the helper falls back to `removeMaterializedWorkspace`. Tests
+ * inject a stub via `BurrowsClient.setDestroyOverrides()` so handler tests
+ * can verify cleanup without hitting `git worktree`.
+ */
+export interface BurrowDestroyOverrides {
+	removeWorkspace?: (opts: RemoveWorkspaceOptions) => Promise<void>;
+}
+
 export interface EventTailFilter {
 	burrowId?: string;
 	burrowIds?: string[];
@@ -127,6 +139,7 @@ export interface EventTailFilter {
  */
 export class BurrowsClient {
 	private upOverrides: BurrowUpOverrides | null = null;
+	private destroyOverrides: BurrowDestroyOverrides | null = null;
 
 	constructor(
 		private readonly client: Client,
@@ -167,6 +180,11 @@ export class BurrowsClient {
 		this.upOverrides = overrides;
 	}
 
+	/** Test seam — see `BurrowDestroyOverrides`. Set to `null` to clear. */
+	setDestroyOverrides(overrides: BurrowDestroyOverrides | null): void {
+		this.destroyOverrides = overrides;
+	}
+
 	list(filter: BurrowListFilter = {}): Burrow[] {
 		let rows = filter.state
 			? this.repos.burrows.listByState(filter.state, filter.kind)
@@ -197,17 +215,29 @@ export class BurrowsClient {
 	}
 
 	/**
-	 * Archive then prune the burrow's rows (SPEC §14.4 steps 2-6). Workspace
-	 * teardown is the caller's responsibility — see the `destroy` CLI command
-	 * for the full flow including provider workspace removal.
+	 * Tear down a burrow end-to-end (SPEC §14.4): stop if active, remove the
+	 * provider workspace (worktree + branch) unless `keepWorkspace`, then
+	 * archive + prune live rows + mark destroyed. Returns the wire-shape
+	 * `DestroyBurrowResult` (the storage half of the flow); the workspace
+	 * step is a side effect.
+	 *
+	 * Already-destroyed burrows return a synthesized empty result (idempotent
+	 * — no second archive, no workspace work).
 	 */
-	async destroy(id: string, opts: { archive?: boolean } = {}): Promise<DestroyBurrowResult> {
-		return destroyBurrowStorage({
-			db: this.client.db,
-			burrowId: id,
-			archiveRoot: this.client.paths.archiveDir,
+	async destroy(
+		id: string,
+		opts: { archive?: boolean; keepWorkspace?: boolean; force?: boolean } = {},
+	): Promise<DestroyBurrowResult> {
+		const fullOpts = {
 			...(opts.archive !== undefined ? { archive: opts.archive } : {}),
-		});
+			...(opts.keepWorkspace !== undefined ? { keepWorkspace: opts.keepWorkspace } : {}),
+			...(opts.force !== undefined ? { force: opts.force } : {}),
+			...(this.destroyOverrides?.removeWorkspace
+				? { removeWorkspace: this.destroyOverrides.removeWorkspace }
+				: {}),
+		};
+		const outcome = await destroyBurrowFully(this.client, id, fullOpts);
+		return outcome.archive;
 	}
 }
 

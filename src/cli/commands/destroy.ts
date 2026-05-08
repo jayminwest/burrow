@@ -1,27 +1,15 @@
 /**
  * `burrow destroy <id>...` — tear down workspace + archive events (SPEC §14.4, §16).
  *
- * Six-step flow per SPEC §14.4:
- *   1. Stop (transition active→stopped if needed).
- *   2-4. Archive events / messages / runs (handled by destroyBurrowStorage).
- *   5. Remove the workspace.
- *   6. Mark burrow destroyed + prune live rows (also in destroyBurrowStorage).
- *
- * Workspace removal is a side-effect that the storage layer can't perform on
- * its own — we resolve `MaterializedWorkspaceSource` from the persisted
- * `providerStateJson` and delegate to `removeMaterializedWorkspace`. Failures
- * during workspace removal are recorded but don't prevent the row from being
- * archived; the user can re-run with a manual cleanup if needed.
+ * The per-id orchestration lives in `src/lib/destroy.ts:destroyBurrowFully`,
+ * which the HTTP `DELETE /burrows/:id` handler also funnels through. This
+ * command is the batch front-end: it loops over ids, captures per-id
+ * outcomes (incl. `workspaceRemoved`), and renders them.
  */
 
-import type { Burrow } from "../../core/types.ts";
-import type { DestroyBurrowResult } from "../../events/destroy.ts";
 import type { Client } from "../../lib/client.ts";
-import {
-	type MaterializedWorkspaceSource,
-	type RemoveWorkspaceOptions,
-	removeMaterializedWorkspace,
-} from "../../provider/local/workspace.ts";
+import { type DestroyBurrowFullyOutcome, destroyBurrowFully } from "../../lib/destroy.ts";
+import type { RemoveWorkspaceOptions } from "../../provider/local/workspace.ts";
 
 export interface DestroyCommandOptions {
 	noArchive?: boolean;
@@ -41,7 +29,7 @@ export interface DestroyCommandInput {
 export interface DestroyCommandOutcome {
 	id: string;
 	ok: boolean;
-	archive: DestroyBurrowResult | null;
+	archive: DestroyBurrowFullyOutcome["archive"] | null;
 	workspaceRemoved: boolean;
 	error?: string;
 }
@@ -51,7 +39,6 @@ export interface DestroyCommandResult {
 }
 
 export async function runDestroyCommand(input: DestroyCommandInput): Promise<DestroyCommandResult> {
-	const remover = input.removeWorkspace ?? removeMaterializedWorkspace;
 	const outcomes: DestroyCommandOutcome[] = [];
 
 	for (const id of input.burrowIds) {
@@ -62,22 +49,17 @@ export async function runDestroyCommand(input: DestroyCommandInput): Promise<Des
 			workspaceRemoved: false,
 		};
 		try {
-			const burrow = input.client.burrows.get(id);
-			if (burrow.state === "destroyed") {
-				outcome.ok = true;
-				outcomes.push(outcome);
-				continue;
-			}
-			if (burrow.state === "active") {
-				input.client.burrows.stop(id);
-			}
-			if (!input.options.keepWorkspace) {
-				outcome.workspaceRemoved = await tryRemoveWorkspace(burrow, remover, input.options.force);
-			}
-			outcome.archive = await input.client.burrows.destroy(id, {
+			const full = await destroyBurrowFully(input.client, id, {
 				archive: !input.options.noArchive,
+				...(input.options.keepWorkspace !== undefined
+					? { keepWorkspace: input.options.keepWorkspace }
+					: {}),
+				...(input.options.force !== undefined ? { force: input.options.force } : {}),
+				...(input.removeWorkspace ? { removeWorkspace: input.removeWorkspace } : {}),
 			});
 			outcome.ok = true;
+			outcome.workspaceRemoved = full.workspaceRemoved;
+			outcome.archive = full.alreadyDestroyed ? null : full.archive;
 		} catch (err) {
 			outcome.error = err instanceof Error ? err.message : String(err);
 		}
@@ -85,35 +67,6 @@ export async function runDestroyCommand(input: DestroyCommandInput): Promise<Des
 	}
 
 	return { outcomes };
-}
-
-async function tryRemoveWorkspace(
-	burrow: Burrow,
-	remover: (opts: RemoveWorkspaceOptions) => Promise<void>,
-	force: boolean | undefined,
-): Promise<boolean> {
-	const source = extractWorkspaceSource(burrow);
-	if (!source) return false;
-	try {
-		await remover({
-			workspacePath: burrow.workspacePath,
-			source,
-			...(force !== undefined ? { force } : {}),
-		});
-		return true;
-	} catch {
-		return false;
-	}
-}
-
-function extractWorkspaceSource(burrow: Burrow): MaterializedWorkspaceSource | null {
-	const state = burrow.providerStateJson;
-	if (!state || typeof state !== "object") return null;
-	const candidate = (state as { workspaceSource?: unknown }).workspaceSource;
-	if (!candidate || typeof candidate !== "object") return null;
-	const c = candidate as { kind?: unknown; branch?: unknown };
-	if ((c.kind !== "worktree" && c.kind !== "clone") || typeof c.branch !== "string") return null;
-	return candidate as MaterializedWorkspaceSource;
 }
 
 export function renderDestroyResult(result: DestroyCommandResult): string {
