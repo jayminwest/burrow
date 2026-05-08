@@ -23,8 +23,17 @@ RUN apt-get update \
 		build-essential \
 		curl \
 		git \
+		gnupg \
 		uidmap \
 		unzip \
+	&& rm -rf /var/lib/apt/lists/*
+
+# Node 20 LTS via NodeSource. burrow.toml's [toolchain] declares node = ">=20",
+# so `bw doctor` / `bw up` fail inside the container without it. Ubuntu 24.04
+# ships Node 18 by default, so the NodeSource setup script is the simplest
+# pinned-LTS path that matches the bun toolchain pin's spirit.
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+	&& apt-get install -y --no-install-recommends nodejs \
 	&& rm -rf /var/lib/apt/lists/*
 
 # Non-root dev user. UID/GID 1000 matches the default macOS/Linux host user
@@ -49,6 +58,12 @@ RUN curl -fsSL https://bun.sh/install | bash
 # Claude Code CLI, baked into the image so `claude` is on PATH the moment the
 # container starts. Auth happens on first run (`claude` walks the user through).
 RUN bun install -g @anthropic-ai/claude-code
+
+# Mulch + Seeds CLIs. CLAUDE.md mandates `ml prime` / `sd prime` at session
+# start and `sd close` / `sd sync` at session end, so the canonical dev
+# environment must ship them. Versions pinned to the ones CLAUDE.md references
+# for reproducible images.
+RUN bun install -g @os-eco/mulch-cli@0.8.0 @os-eco/seeds-cli@0.4.0
 
 WORKDIR /workspace
 

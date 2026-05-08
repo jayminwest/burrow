@@ -19,5 +19,5 @@
 			}
 		}
 	},
-	"postCreateCommand": "bun install"
+	"postCreateCommand": "bun install && bun link"
 }
