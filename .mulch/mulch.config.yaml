@@ -21,6 +21,7 @@ domains:
   ship: {}
   proxy: {}
   dashboard: {}
+  server: {}
 governance:
   max_entries: 100
   warn_entries: 150
