@@ -89,6 +89,37 @@ Every command supports `--json` for machine-readable output and `--quiet`/`--ver
 
 Full design rationale, the `burrow.toml` schema, and the deferred V2 surface live in [SPEC.md](SPEC.md).
 
+## Linux dev container
+
+Linux is burrow's canonical isolation target — the deploy target is a Linux container running `bwrap`. macOS contributors can exercise that exact path locally via the Docker-based dev container under [`.devcontainer/`](.devcontainer):
+
+```bash
+docker compose -f .devcontainer/compose.yml up -d
+docker compose -f .devcontainer/compose.yml exec dev bash
+
+# inside the container
+bun install
+bun test && bun run lint && bun run typecheck
+bw up && bw fork <id> --task "..."   # bwrap nests cleanly
+```
+
+VS Code and JetBrains pick up `.devcontainer/devcontainer.json` automatically (Reopen in Container).
+
+### Why the four `security_opt` / `cap_add` flags
+
+Vanilla `docker run` does **not** work — Ubuntu 24.04 hosts (the most common Docker Desktop and stock-distro target) ship `kernel.apparmor_restrict_unprivileged_userns=1` by default, which blocks the user-namespace creation bwrap relies on. The minimum non-privileged invocation needs all four:
+
+| Flag | Why |
+|---|---|
+| `security_opt: apparmor=unconfined` | Lifts the host AppArmor profile that blocks `unshare(CLONE_NEWUSER)` from inside the container. Without it, bwrap exits with `EPERM` at unshare. |
+| `security_opt: seccomp=unconfined` | Docker's default seccomp profile blocks several syscalls bwrap needs (e.g. `clone3` argument shapes for new namespaces). |
+| `security_opt: systempaths=unconfined` | Unmasks `/proc` inside the container so bwrap can mount its own `/proc` in the new pid+mount namespace. Without it: `Can't mount proc on /newroot/proc`. |
+| `cap_add: SYS_ADMIN` | Lets bwrap bring up `lo` inside its new netns (`RTM_NEWADDR` needs `CAP_NET_ADMIN`, which `SYS_ADMIN` implies). Without it: `Failed RTM_NEWADDR`. |
+
+`--privileged` works as a fallback but relaxes the outer container far more than necessary. The four targeted flags are the minimum that lets nested-userns bwrap succeed.
+
+Recipe verified on Ubuntu 24.04 host with Docker 28.4.
+
 ## Ecosystem
 
 Burrow is part of the [os-eco](https://github.com/jayminwest/os-eco) ecosystem. It does not orchestrate agents — that's [Overstory](https://github.com/jayminwest/overstory) and [Mycelium](https://github.com/jayminwest/mycelium). It runs whatever agent the orchestrator hands it, in isolation.

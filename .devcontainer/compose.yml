@@ -1,0 +1,51 @@
+# Linux-canonical dev environment for burrow.
+#
+# Run from the repo root:
+#
+#   docker compose -f .devcontainer/compose.yml up -d
+#   docker compose -f .devcontainer/compose.yml exec dev bash
+#
+# Inside the shell, `bun test && bun run lint && bun run typecheck` and
+# `bw up && bw fork ...` all work — bwrap nests cleanly inside the container.
+#
+# The four security_opt / cap_add entries below are NOT optional. Each one
+# unblocks a specific failure mode bwrap hits on Ubuntu 24.04 hosts (the
+# default Docker Desktop and stock Linux distro). Removing any of them puts
+# us back to "bwrap can't create namespaces / can't mount proc / can't bring
+# up loopback." See ../README.md for the full diagnosis.
+
+services:
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: burrow-dev:local
+    # Lift Docker's default AppArmor profile. Ubuntu 24.04 ships
+    # `kernel.apparmor_restrict_unprivileged_userns=1`, which blocks bwrap's
+    # `unshare(CLONE_NEWUSER)` from any container without an explicit
+    # AppArmor profile. Without this: bwrap exits with EPERM at unshare().
+    # Lift the default seccomp profile too — Docker's default blocks several
+    # syscalls bwrap needs (e.g. `clone3` argument shapes for new namespaces).
+    # systempaths=unconfined unmasks /proc so bwrap can mount its own /proc
+    # in the new pid+mount namespace. Without this: "Can't mount proc on
+    # /newroot/proc."
+    security_opt:
+      - apparmor=unconfined
+      - seccomp=unconfined
+      - systempaths=unconfined
+    # SYS_ADMIN lets bwrap bring up the loopback interface inside its new
+    # network namespace (RTM_NEWADDR requires CAP_NET_ADMIN, which SYS_ADMIN
+    # implies in this context). Without this: "Failed RTM_NEWADDR."
+    cap_add:
+      - SYS_ADMIN
+    # Bind-mount the project root (one level up from .devcontainer/) onto
+    # /workspace. `consistency: cached` is a macOS Docker Desktop hint and a
+    # no-op on Linux, so it's safe to leave on.
+    volumes:
+      - ../:/workspace:cached
+    working_dir: /workspace
+    # Persist the container so editors and `docker compose exec` can attach
+    # without rebuilding.
+    command: ["sleep", "infinity"]
+    stdin_open: true
+    tty: true
