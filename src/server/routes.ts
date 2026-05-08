@@ -1,8 +1,11 @@
 /**
- * Route table for `burrow serve`. All handlers return 501 NotImplemented in
- * step 1 — steps 2 (CRUD) and 3 (streaming) of pl-5b40 fill them in. The
- * shape and ordering here is the contract: tests in step 7 lock the route
- * list against this file.
+ * Route table for `burrow serve`. After pl-5b40 step 3, the only route
+ * still returning 501 NotImplemented is POST /burrows — there's no
+ * `Client.burrows.create` analogue yet. Everything else (CRUD + the three
+ * streaming surfaces) is wired to a real handler via `handlerFor`.
+ *
+ * The shape and ordering here is the contract: tests in step 7 lock the
+ * route list against this file.
  *
  * Routes mirror `Client` (src/lib/client.ts) namespaces 1:1:
  *   §15.1 BurrowsClient   → /burrows
@@ -13,23 +16,31 @@
  *   §26   Dashboard       → /watch
  */
 
+import type { Client } from "../lib/client.ts";
 import { notImplemented } from "./errors.ts";
+import { handlerFor } from "./handlers.ts";
 import { jsonResponse } from "./response.ts";
 import type { Route, RouteHandler } from "./types.ts";
 
 /**
- * Scaffold the canonical route table. Step 1 wires every route to a stub that
- * returns 501; later steps swap individual entries for real handlers.
- *
- * `client` is unused today but kept in the signature so steps 2-3 can pull
- * from it without churning every callsite.
+ * Build the canonical route table. When `client` is null (router-only tests
+ * and the existing scaffold tests) every route returns 501; when a real
+ * `Client` is provided, implemented routes get bound handlers and the rest
+ * fall back to the 501 stub (POST /burrows + the streaming surfaces).
  */
-export function buildRoutes(_client: unknown): Route[] {
-	return ROUTE_TABLE.map((entry) => ({
-		method: entry.method,
-		pattern: entry.pattern,
-		handler: stubHandler(entry.method, entry.pattern),
-	}));
+export function buildRoutes(client: Client | null): Route[] {
+	return ROUTE_TABLE.map((entry) => {
+		const handler =
+			client === null
+				? stubHandler(entry.method, entry.pattern)
+				: (handlerFor(client, entry.method, entry.pattern) ??
+					stubHandler(entry.method, entry.pattern));
+		return {
+			method: entry.method,
+			pattern: entry.pattern,
+			handler,
+		};
+	});
 }
 
 /**
@@ -46,7 +57,7 @@ const healthRoutes: readonly Route[] = [
 	},
 ];
 
-export function buildRoutesWithHealth(client: unknown): Route[] {
+export function buildRoutesWithHealth(client: Client | null): Route[] {
 	return [...healthRoutes, ...buildRoutes(client)];
 }
 

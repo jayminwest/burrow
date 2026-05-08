@@ -5,6 +5,7 @@
  * binds localhost TCP only.
  */
 
+import type { Client } from "../lib/client.ts";
 import { createLogger, type Logger } from "../logging/logger.ts";
 import { methodNotAllowed, notFound, renderError } from "./errors.ts";
 import { jsonResponse } from "./response.ts";
@@ -16,8 +17,12 @@ import type { Route, RouteContext, ServeHandle, ServeOptions } from "./types.ts"
  * Boot a Bun server bound to localhost TCP. `client` is the same `Client` a
  * library caller would hold; the server never opens its own — keeping the
  * lifetime explicit on the caller side mirrors how the CLI commands work.
+ *
+ * `client` may be null for routing-only tests; with a null client every
+ * mirrored route returns 501 (the step-1 scaffold behaviour) — only the
+ * /healthz route and any explicitly-passed `opts.routes` actually run.
  */
-export function startServer(client: unknown, opts: ServeOptions = {}): ServeHandle {
+export function startServer(client: Client | null, opts: ServeOptions = {}): ServeHandle {
 	const logger = opts.logger ?? createLogger();
 	const routes: readonly Route[] = opts.routes ?? buildRoutesWithHealth(client);
 	const hostname = opts.hostname ?? "127.0.0.1";

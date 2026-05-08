@@ -7,8 +7,8 @@
  * surfaces (events tail, watch snapshot) emit NDJSON over chunked HTTP and reuse
  * the same envelope as `burrow events --json` / `burrow watch --json`.
  *
- * This file declares the seams without committing to handler implementations —
- * step 1 of pl-5b40 ships the routing scaffold, steps 2-3 fill in handlers.
+ * This file declares the seams; pl-5b40 step 1 wired the routing scaffold,
+ * step 2 filled in CRUD adapters, step 3 added the streaming handlers.
  */
 
 import type { Logger } from "../logging/logger.ts";

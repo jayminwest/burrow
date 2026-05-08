@@ -1269,4 +1269,16 @@ Snapshots are best-effort live state, not a replay log. The SQLite event store r
 
 ### 26.5 `burrow serve` forward-compat
 
-When `burrow serve` lands (§24, second post-V1 feature), it consumes `streamSnapshots()` directly and broadcasts each yielded `DashboardSnapshot` over a WebSocket frame. The wire shape is identical to `burrow watch --json` so a single client library can target both. Until then, `burrow watch --json` is the canonical reference for the envelope; any `burrow serve` redesign that breaks `watch --json` is a breaking change and bumps `version`.
+When `burrow serve` lands (§27), it consumes `streamSnapshots()` directly and broadcasts each yielded `DashboardSnapshot` as NDJSON over chunked HTTP. The wire shape is identical to `burrow watch --json` so a single client library can target both. Until then, `burrow watch --json` is the canonical reference for the envelope; any `burrow serve` redesign that breaks `watch --json` is a breaking change and bumps `version`.
+
+---
+
+## 27. HTTP API (`burrow serve`)
+
+Design and decomposition live in seeds, not here — the spec section is intentionally a pointer so the design record stays where the work happens.
+
+- **Seed:** `burrow-1d64` — feature.
+- **Plan:** `pl-5b40` — context, approach, rejected alternatives, risks, acceptance criteria, and 8 child-seed implementation steps.
+- **View:** `sd plan show pl-5b40`.
+
+Motivation: the warren control plane (and any future external orchestrator) needs a stable, streaming, cross-process surface to drive burrow. Routes mirror the `Client` namespaces 1:1 so the Library API stays the source of truth. Unix socket is the primary transport (single-host / single-container deploy); localhost TCP is opt-in. Bearer auth from `BURROW_API_TOKEN` env. Single-user posture preserved — multi-user remains a non-goal. When this lands, §3.2's "No HTTP API server in V1" non-goal moves to "shipped in V1.x" and §26.5's forward-compat note resolves.
