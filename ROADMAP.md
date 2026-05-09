@@ -95,41 +95,84 @@ the production-swarm default.
 
 ---
 
-## R-02 — FlyProvider (and other remote `BurrowProvider`s)
+## R-02 — FlyProvider + SshProvider (remote `BurrowProvider`s)
 Status: [proposed]
-Depends on: R-01 (shipped — deploy posture in [DEPLOY.md](DEPLOY.md): Fly Machines = on-host posture, no four-flag overrides needed)
-Unlocks: cloud-deployed burrow swarms; the load-bearing test of the
-`BurrowProvider` seam (SPEC §23)
+Depends on: R-01 (shipped — deploy posture in [DEPLOY.md](DEPLOY.md): Fly
+Machines = on-host posture, no four-flag overrides needed); R-07
+(workspace-seed HTTP API — without it, remote burrows have no contract for
+warren to populate `.canopy/`, `.mulch/`, `.seeds/`)
+Unlocks: cloud-deployed burrow swarms; warren-on-Fly's remote-daemon model;
+the load-bearing test of the `BurrowProvider` seam (SPEC §23)
 
-**Problem.** V1 ships only `LocalProvider`. The whole point of the
-`BurrowProvider` interface (SPEC §9) is that remote provisioning is a second
-implementation, not a rewrite. Until a remote provider actually lands, the
-seam's claim is unproven.
-
-**Sketch.** Build `FlyProvider` as the first remote substrate (SPEC §9.2 has
-the design sketch). Always `kind: 'clone'` for workspace materialization. The
-fly machine runs its own bwrap; control-plane API over HTTPS; the local CLI
-calls into a thin remote-burrow API exposed by a Fly app started on demand.
-User-facing surface stays identical:
-
-    burrow up                    # local
-    burrow up --remote fly       # fly machine
-    burrow events --follow       # works the same either way
-
-Acceptance bar: a `FlyProvider` lands without modifying any file under
+**Problem.** V1 ships only `LocalProvider`. SPEC §23's last success criterion
+— "a future `FlyProvider` can be added without modifying any file under
 `src/core/`, `src/db/`, `src/runtime/`, `src/inbox/`, `src/events/`, or
-`src/runner/` (the V1 success criterion in SPEC §23 made load-bearing).
+`src/runner/`" — is unverified until at least one remote provider actually
+lands. And until *two* land, "the seam is generic" is just "the seam is
+Fly-shaped."
+
+**Sketch.** The remote-daemon model: a long-lived `burrow serve` runs on a
+host (Fly Machine or SSH'd VPS) per DEPLOY.md's on-host posture. `burrow up
+--remote fly` is `POST /burrows` over HTTPS against that daemon's endpoint,
+not a fresh Fly Machine boot per burrow. Cold start is paid once at
+machine-up, not per `burrow up`. Each remote burrow's workspace is `kind:
+'clone'` (no shared filesystem with the caller). User-facing surface stays
+identical:
+
+    burrow up                          # local
+    burrow up --remote fly             # fly machine
+    burrow up --remote my-vps          # named SSH remote
+    burrow events --follow             # works the same against any of them
+
+The provider seam splits cleanly into two responsibilities — machine
+lifecycle and daemon binding:
+
+- `LocalProvider`: no lifecycle (`$localhost`); spawn or attach local
+  `burrow serve`.
+- `FlyProvider`: lifecycle = ensure a Fly Machine exists for this user;
+  binding = HTTPS to that machine.
+- `SshProvider`: no lifecycle (user already deployed per DEPLOY.md);
+  binding = HTTPS to user's registered host.
+
+`SshProvider` is essentially a *registration*: `burrow login ssh
+https://my-vps --token …` records a named remote, and everything downstream
+is shared `HttpClient` + URL code. Shipping Fly + SSH together is the
+load-test — anything Fly-specific that leaks past the lifecycle boundary
+will fail to compile against `SshProvider`.
+
+Acceptance bar: both providers land without modifying any file under
+`src/core/`, `src/db/`, `src/runtime/`, `src/inbox/`, `src/events/`, or
+`src/runner/` (SPEC §23's last criterion made load-bearing).
+
+**Decisions made (2026-05-08 design discussion).**
+- **Interpretation A (remote daemon), not B (per-burrow Fly Machine).** One
+  machine = one daemon = many burrows. Per-burrow Fly Machine boot is a
+  future scale-out layer on top, not the same product.
+- **Primary consumer is warren-on-Fly.** Solo-user `burrow up --remote fly`
+  from a laptop is supported but not the dominant case. Tilts the design
+  toward persistent-machine, not ephemeral.
+- **Fly + SSH ship together.** Fly-only doesn't actually test "the seam is
+  generic." Generic-SSH provider rides on the same daemon-binding code as
+  Fly with no machine lifecycle of its own.
+- **Workspace seeding goes through R-07's API**, not direct-disk writes.
+  Warren's current shared-fs reach into burrow's workspace path is a
+  co-location accident; R-02 cannot rely on it.
 
 **Open questions.**
-- Authentication / billing model for the user's Fly account — env-passthrough
-  of `FLY_API_TOKEN`, or a `burrow login fly` command?
-- Cold-start latency budget — first `burrow up --remote fly` against a fresh
-  app vs. a warm app pool.
-- Credential forwarding to the remote machine — SSH agent over the
-  control-plane connection (R-01 posture suggests it's a host, not a pod, so
-  the agent socket can mount cleanly), per-project deploy keys, or both.
-- Second remote provider after Fly — EC2 / GCE / generic SSH? Sequencing
-  decides whether the seam is really generic or just Fly-shaped.
+- Credential delivery to the remote machine — for warren-on-Fly, per-machine
+  via Fly secrets (`ANTHROPIC_API_KEY`, `GITHUB_TOKEN`); per-burrow override
+  is V2. Confirm.
+- Auth from local CLI to remote daemon — bearer token identical to local
+  `BURROW_API_TOKEN`, stored under a named profile in
+  `~/.config/burrow/remotes.toml` (think `git remote`). `burrow login fly`
+  and `burrow login ssh` populate it.
+- Fly app provisioning — does FlyProvider create the Fly app on first use,
+  or does the user run `fly launch` against a published burrow image and we
+  attach? Lean attach-only for V1 (matches DEPLOY.md's "you provision the
+  host"); add provisioning later as a convenience.
+- Per-user tenancy on the Fly machine — one machine = one warren = many
+  burrows is the model. Multi-tenanting a single Fly machine across warrens
+  is explicitly out of scope.
 
 ---
 
@@ -249,6 +292,66 @@ burrow.
 
 ---
 
+## R-07 — Workspace-seed HTTP API
+Status: [proposed]
+Depends on: —
+Unlocks: warren stops reaching into burrow's workspace path via shared
+filesystem; prerequisite for R-02 (remote burrows have no shared disk to
+reach into)
+
+**Problem.** Warren's current run-spawn flow seeds the burrow workspace by
+writing directly to `burrow.workspacePath` from disk — three drops
+(`.canopy/agent.json`, `.mulch/expertise/*.jsonl`, `.seeds/workflow.txt`,
+all in `warren/src/runs/seed.ts`). This works today only because warren
+and burrow are co-tenanted in one container and share `/data`. The moment
+burrow runs on a different host (R-02), those writes break — there is no
+shared filesystem. Warren's own SPEC §11.A even waves at it: "invokes `ml
+record` inside the burrow workspace via `burrow exec` (or equivalent)."
+That equivalent doesn't exist.
+
+The smell predates remote: even co-tenanted, warren has no API contract for
+"put files in a burrow's workspace." It reaches past the seam onto disk.
+Every other warren↔burrow path is HTTP with a typed contract; this one
+isn't.
+
+**Sketch.** Add a workspace-mutation surface to burrow's HTTP API. Two
+shapes, both probably wanted:
+
+1. **Provision-time seed payload.** `POST /burrows` accepts an optional
+   `seed: { files: [{ path, mode?, contents }, ...] }`. Files written into
+   the new workspace before the burrow returns. Atomic with provisioning,
+   no second round-trip — covers warren's "all three files known at
+   provision" case in one shot.
+2. **Post-provision file API.** `POST /burrows/:id/files` with the same
+   envelope. Allows seeding after provisioning, top-up mid-run, and covers
+   any future use case the provision-time path doesn't.
+
+Path validation: writes constrained to within `workspacePath`; no symlink
+escape; no overwrite of paths burrow owns (`.git/`, sandbox metadata,
+etc.). Warren consumes via `HttpClient.burrows.create({ ..., seed })` and
+deletes the disk-writing code in `src/runs/seed.ts`. Once R-07 is shipped,
+warren's seed code path is the same local and remote.
+
+**Open questions.**
+- Read side. Warren's reap step (§11.A) also reads `<burrow-workspace>/
+  .mulch/expertise/*.jsonl` off disk. Does R-07 include `GET
+  /burrows/:id/files?path=…`, or is that a separate item? Lean include —
+  same shape, same constraints, ships warren a complete remote-capable
+  seed/reap loop.
+- Binary content. Base64-encode in JSON, or accept multipart? JSON-with-
+  base64 is simpler and covers the only known consumer (text); multipart
+  is the right answer if anyone ever wants to seed a tarball.
+- Quota / size limits. Provision-time seeds shouldn't be unbounded. A 10
+  MB cap per call and 1 MB per file seems fine for everything warren
+  actually seeds today.
+- Whether warren switches over before R-02 ships. Argument for: warren
+  stops violating the seam contract immediately, and R-02 inherits a
+  battle-tested API. Argument against: nothing's broken today. Lean
+  immediate switchover — the whole point of carving R-07 out is to load-
+  test the API with a real consumer well before R-02 arrives.
+
+---
+
 ## Decisions already made
 
 Choices locked in during prior design discussions. Captured here so they aren't
@@ -280,9 +383,12 @@ relitigated when items become seeds issues.
 
 Threads that run through multiple items.
 
-- **Remote substrate (R-01, R-02, R-06).** R-01 picks the deploy posture, R-02
-  proves the `BurrowProvider` seam, R-06 lets upstream tools consume the result.
-  Sequence them so each one's foundation is real before the next consumes it.
+- **Remote substrate (R-01, R-07, R-02, R-06).** R-01 picks the deploy
+  posture, R-07 closes the workspace-mutation contract gap that warren is
+  papering over with shared-filesystem writes, R-02 proves the
+  `BurrowProvider` seam (Fly + SSH, in tandem), R-06 lets upstream tools
+  consume the result. Sequence so each one's foundation is real before the
+  next consumes it.
 - **Plugin registries (R-05, parallels mulch R-04).** Burrow already takes user
   extension via `[[agents]]`; ship targets are the next surface. Future
   registries (sandbox profiles? secret resolvers?) should follow the same
@@ -340,14 +446,20 @@ so subsequent revisions know what's already off the punch list.
 A first cut at order of attack — not committed:
 
 1. ~~**R-01** (deploy posture)~~ — shipped, see [DEPLOY.md](DEPLOY.md).
-2. **R-02** (FlyProvider) — first remote `BurrowProvider`; the seam's
-   load-bearing test. Fly Machines map to on-host posture per R-01.
-3. **R-04** (toolchain auto-install) — orthogonal to remote work; valuable
+2. **R-07** (workspace-seed HTTP API) — small, immediately consumed by
+   warren, prerequisite for R-02. Carves the workspace-mutation contract
+   out of R-02 so a real consumer load-tests it ahead of remote work.
+3. **R-02** (FlyProvider + SshProvider together) — first remote
+   `BurrowProvider`s; the seam's load-bearing test. Fly Machines map to
+   on-host posture per R-01; SSH provider keeps the seam from going
+   Fly-shaped.
+4. **R-04** (toolchain auto-install) — orthogonal to remote work; valuable
    for solo and team onboarding without blocking R-02.
-4. **R-06** (overstory/mycelium integration) — once R-02 is shipped, upstream
-   tools have a substrate worth migrating to. Warren is already proving the
-   pattern via burrow's HTTP API + `HttpClient`.
-5. **R-05** (ship target plugins) — incremental once `burrow ship`'s interface
-   is exercised by a fourth, user-supplied target.
-6. **R-03** (snapshot / restore) — defer until V1 + R-02 are stable enough
-   that "rewind a burrow" is a meaningful operation rather than rare polish.
+5. **R-06** (overstory/mycelium integration) — once R-02 is shipped,
+   upstream tools have a substrate worth migrating to. Warren is already
+   proving the pattern via burrow's HTTP API + `HttpClient`.
+6. **R-05** (ship target plugins) — incremental once `burrow ship`'s
+   interface is exercised by a fourth, user-supplied target.
+7. **R-03** (snapshot / restore) — defer until V1 + R-02 are stable enough
+   that "rewind a burrow" is a meaningful operation rather than rare
+   polish.
