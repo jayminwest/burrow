@@ -184,6 +184,9 @@ export {
 	type HttpClientOptions,
 	HttpEventsClient,
 	type HttpEventTailFilter,
+	HttpFilesClient,
+	type HttpFilesReadOptions,
+	type HttpFilesWriteResult,
 	HttpInboxClient,
 	type HttpInboxListFilter,
 	type HttpInboxSendInput,
@@ -191,6 +194,9 @@ export {
 	type HttpRunListFilter,
 	type HttpRunStreamOptions,
 	HttpRunsClient,
+	type HttpWorkspaceFile,
+	type HttpWorkspaceFileEncoding,
+	type HttpWorkspaceFileOutput,
 } from "./lib/http-client.ts";
 export { createLogger, type Logger } from "./logging/logger.ts";
 export { buildBwrapArgv, SYSTEM_RO_MOUNTS } from "./provider/local/bwrap.ts";

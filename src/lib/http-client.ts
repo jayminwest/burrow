@@ -109,6 +109,40 @@ export interface HttpBurrowUpInput {
 	 * `burrow.toml`.
 	 */
 	agents?: readonly string[];
+	/**
+	 * Optional workspace seed payload (R-07). Files are written into the new
+	 * workspace before the burrow is returned, atomic with provisioning — a
+	 * failed seed write rolls the burrow back so the caller never observes a
+	 * half-seeded workspace. Same path-validation contract as
+	 * `files.write`. Single round-trip for orchestrators (e.g. warren) that
+	 * drop `.canopy/`, `.mulch/`, `.seeds/` inputs before the agent starts.
+	 */
+	seed?: { files: readonly HttpWorkspaceFile[] };
+}
+
+export type HttpWorkspaceFileEncoding = "utf-8" | "base64";
+
+export interface HttpWorkspaceFile {
+	/** Workspace-relative path. Absolute, `..`, symlink-escape, and `.git/` writes are rejected. */
+	path: string;
+	contents: string;
+	encoding?: HttpWorkspaceFileEncoding;
+	/** POSIX mode bits applied with chmod after write (0–0o777). Defaults to 0o644. */
+	mode?: number;
+}
+
+export interface HttpWorkspaceFileOutput {
+	path: string;
+	contents: string;
+	encoding: HttpWorkspaceFileEncoding;
+}
+
+export interface HttpFilesWriteResult {
+	written: number;
+}
+
+export interface HttpFilesReadOptions {
+	encoding?: HttpWorkspaceFileEncoding;
 }
 
 export interface HttpEventTailFilter {
@@ -253,6 +287,9 @@ export class HttpBurrowsClient {
 		if (input.network !== undefined) body.network = input.network;
 		if (input.provider !== undefined) body.provider = input.provider;
 		if (input.agents !== undefined) body.agents = [...input.agents];
+		if (input.seed !== undefined) {
+			body.seed = { files: input.seed.files.map(serializeWorkspaceFile) };
+		}
 		const row = await this.transport.request<unknown>({
 			method: "POST",
 			path: "/burrows",
@@ -316,6 +353,56 @@ export class HttpBurrowsClient {
 			query,
 		});
 	}
+}
+
+/**
+ * Workspace files namespace (R-07, plan pl-2467). HTTP-only — the
+ * in-process `Client` doesn't surface this because in-process callers can
+ * just write to `burrow.workspacePath` directly. Mirrors `POST
+ * /burrows/:id/files` and `GET /burrows/:id/files?path=…` so orchestrators
+ * (warren) can seed and reap workspace files without touching disk.
+ *
+ * Path-validation lives server-side (`resolveWorkspaceFilePath`): relative
+ * paths only, no `..`, no symlink escapes, no overwrites of `.git/` or
+ * `.gitconfig.burrow`. Server returns 400 (rehydrated to `ValidationError`)
+ * on a rejected entry — writes are all-or-nothing so a partial batch never
+ * lands.
+ */
+export class HttpFilesClient {
+	constructor(private readonly transport: HttpTransportClient) {}
+
+	async write(
+		burrowId: string,
+		files: readonly HttpWorkspaceFile[],
+	): Promise<HttpFilesWriteResult> {
+		return this.transport.request<HttpFilesWriteResult>({
+			method: "POST",
+			path: `/burrows/${encodeURIComponent(burrowId)}/files`,
+			jsonBody: { files: files.map(serializeWorkspaceFile) },
+		});
+	}
+
+	async read(
+		burrowId: string,
+		path: string,
+		opts: HttpFilesReadOptions = {},
+	): Promise<HttpWorkspaceFileOutput> {
+		const query = new URLSearchParams();
+		query.set("path", path);
+		if (opts.encoding !== undefined) query.set("encoding", opts.encoding);
+		return this.transport.request<HttpWorkspaceFileOutput>({
+			method: "GET",
+			path: `/burrows/${encodeURIComponent(burrowId)}/files`,
+			query,
+		});
+	}
+}
+
+function serializeWorkspaceFile(file: HttpWorkspaceFile): Record<string, unknown> {
+	const entry: Record<string, unknown> = { path: file.path, contents: file.contents };
+	if (file.encoding !== undefined) entry.encoding = file.encoding;
+	if (file.mode !== undefined) entry.mode = file.mode;
+	return entry;
 }
 
 /**
@@ -540,6 +627,7 @@ export class HttpClient {
 	readonly inbox: HttpInboxClient;
 	readonly events: HttpEventsClient;
 	readonly agents: HttpAgentsClient;
+	readonly files: HttpFilesClient;
 
 	private readonly transport: HttpTransportClient;
 
@@ -550,6 +638,7 @@ export class HttpClient {
 		this.inbox = new HttpInboxClient(this.transport);
 		this.events = new HttpEventsClient(this.transport);
 		this.agents = new HttpAgentsClient(this.transport);
+		this.files = new HttpFilesClient(this.transport);
 	}
 
 	/** Mirrors `Client.open` so factory call sites can swap one for the other. */
