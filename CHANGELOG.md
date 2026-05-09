@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-05-09
+
+### Fixed
+
+- **Linux sandbox env now travels via the bwrap process env, not argv
+  (`burrow-ab95`).** `buildBwrapArgv` previously rendered
+  `--clearenv` + `--setenv NAME VALUE` for every var, putting secrets
+  like `ANTHROPIC_API_KEY` on the bwrap argv — world-readable via
+  `/proc/<bwrap-pid>/cmdline`, so any in-sandbox process or any host
+  tool that captures cmdline (`ps`, `top`, observability agents) could
+  read the user's provider key. This actually leaked an Anthropic key
+  into a Claude Code transcript during dogfooding. `spawnLinux` now
+  resolves env via `resolveSandboxEnv` and passes it to `Bun.spawn`'s
+  `env` option, so bwrap's process env IS the resolved env; the
+  child's env now lives in `/proc/<pid>/environ` (mode 400, private to
+  the running uid) instead of `/proc/<pid>/cmdline`. macOS `spawnDarwin`
+  already used this channel via `sandbox-exec` — Linux is now symmetric.
+  `buildBwrapArgv` no longer takes `hostEnv`; regression test asserts
+  argv contains neither `--setenv` nor any secret value. SPEC §8.1
+  updated to document the env channel.
+
+### Changed
+
+- **`ROADMAP.md` — R-02 (FlyProvider + SshProvider) flipped to
+  `[deferred]`.** Original framing claimed warren-on-Fly required a
+  remote-daemon model; misread of warren SPEC §10.2 + §3.2 — warren and
+  burrow are co-located in one container over a unix socket, identical
+  on home server and Fly. SPEC §23 seam-validation argument stands alone
+  but lacks a concrete consumer right now. Sequencing reshuffled (R-06
+  no longer waits on R-02, R-07 stands on warren-cleanup merits alone).
+  Revisit when warren V2 worker pool, greenhouse remote dispatch, or
+  laptop `burrow up --remote` actually pulls on the seam.
+
 ## [0.2.4] - 2026-05-09
 
 ### Added
@@ -349,7 +382,8 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.4...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.5...HEAD
+[0.2.5]: https://github.com/jayminwest/burrow/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jayminwest/burrow/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jayminwest/burrow/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/jayminwest/burrow/compare/v0.2.1...v0.2.2
