@@ -10,6 +10,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Burrow, Run } from "../core/types.ts";
@@ -290,6 +291,245 @@ describe("server handlers", () => {
 			body: "not json",
 		});
 		expect(res.status).toBe(400);
+	});
+
+	/* ------------------------------------------------------------------- */
+	/* Workspace files (R-07, burrow-30c7)                                 */
+	/* ------------------------------------------------------------------- */
+
+	test("POST /burrows with `seed` writes files into the workspace before 201", async () => {
+		const projectRoot = mkTmp();
+		client.burrows.setUpOverrides({
+			skipDoctor: true,
+			materializer: async (opts) => {
+				await mkdir(opts.workspacePath, { recursive: true });
+				return {
+					workspacePath: opts.workspacePath,
+					source: { kind: "worktree", branch: opts.branch, hostClonePath: "/host" },
+					identity: null,
+				};
+			},
+		});
+		const res = await fetch(`${handle.url}/burrows`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				projectRoot,
+				seed: {
+					files: [
+						{ path: ".canopy/agent.json", contents: '{"id":"x"}' },
+						{ path: ".mulch/expertise/seed.jsonl", contents: "row\n" },
+					],
+				},
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as Burrow;
+		const canopy = await readFile(join(body.workspacePath, ".canopy/agent.json"), "utf8");
+		const mulch = await readFile(join(body.workspacePath, ".mulch/expertise/seed.jsonl"), "utf8");
+		expect(canopy).toBe('{"id":"x"}');
+		expect(mulch).toBe("row\n");
+		rmSync(projectRoot, { recursive: true, force: true });
+	});
+
+	test("POST /burrows with seed path '..' → 400 and rolls back the burrow", async () => {
+		const projectRoot = mkTmp();
+		client.burrows.setUpOverrides({
+			skipDoctor: true,
+			materializer: async (opts) => {
+				await mkdir(opts.workspacePath, { recursive: true });
+				return {
+					workspacePath: opts.workspacePath,
+					source: { kind: "worktree", branch: opts.branch, hostClonePath: "/host" },
+					identity: null,
+				};
+			},
+		});
+		client.burrows.setDestroyOverrides({ removeWorkspace: async () => {} });
+		const before = client.burrows.list().length;
+		const res = await fetch(`${handle.url}/burrows`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				projectRoot,
+				seed: { files: [{ path: "../escape.txt", contents: "x" }] },
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string } };
+		expect(body.error.code).toBe("validation_error");
+		// Rollback: the freshly-provisioned burrow is destroyed before we
+		// return so the caller doesn't observe a partial-seed workspace.
+		const active = client.burrows.list({ state: "active" });
+		expect(active.length).toBe(before);
+		rmSync(projectRoot, { recursive: true, force: true });
+	});
+
+	test("POST /burrows/:id/files writes files into the workspace", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				files: [
+					{ path: "notes.md", contents: "# hi", mode: 0o600 },
+					{ path: "sub/nested.txt", contents: "deep" },
+				],
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { written: number };
+		expect(body.written).toBe(2);
+		expect(await readFile(join(ws, "notes.md"), "utf8")).toBe("# hi");
+		expect(await readFile(join(ws, "sub/nested.txt"), "utf8")).toBe("deep");
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("POST /burrows/:id/files supports base64-encoded binary contents", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const bytes = new Uint8Array([0, 1, 2, 254, 255]);
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				files: [
+					{
+						path: "blob.bin",
+						contents: Buffer.from(bytes).toString("base64"),
+						encoding: "base64",
+					},
+				],
+			}),
+		});
+		expect(res.status).toBe(200);
+		const written = await readFile(join(ws, "blob.bin"));
+		expect(Array.from(written)).toEqual(Array.from(bytes));
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("POST /burrows/:id/files rejects '..' traversal with 400 and no partial writes", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				files: [
+					{ path: "ok.txt", contents: "first" },
+					{ path: "../escape.txt", contents: "bad" },
+				],
+			}),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string } };
+		expect(body.error.code).toBe("validation_error");
+		// All-or-nothing: the prior valid entry was rejected with the bad one.
+		await expect(readFile(join(ws, "ok.txt"))).rejects.toThrow();
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("POST /burrows/:id/files rejects writes to .git/", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ files: [{ path: ".git/HEAD", contents: "x" }] }),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { message: string } };
+		expect(body.error.message).toMatch(/reserved/);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("POST /burrows/:id/files rejects symlink escape", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		await symlink("/etc", join(ws, "escape"));
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ files: [{ path: "escape/passwd", contents: "x" }] }),
+		});
+		expect(res.status).toBe(400);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("POST /burrows/:id/files for unknown id → 404", async () => {
+		const res = await fetch(`${handle.url}/burrows/bur_nope/files`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ files: [{ path: "x.txt", contents: "x" }] }),
+		});
+		expect(res.status).toBe(404);
+	});
+
+	test("POST /burrows/:id/files with empty files[] → 400", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ files: [] }),
+		});
+		expect(res.status).toBe(400);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files?path= returns the file as utf-8 by default", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		await mkdir(join(ws, ".mulch"), { recursive: true });
+		await writeFile(join(ws, ".mulch/records.jsonl"), "row\n", "utf8");
+		const res = await fetch(
+			`${handle.url}/burrows/${burrow.id}/files?path=${encodeURIComponent(".mulch/records.jsonl")}`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { path: string; contents: string; encoding: string };
+		expect(body.path).toBe(".mulch/records.jsonl");
+		expect(body.contents).toBe("row\n");
+		expect(body.encoding).toBe("utf-8");
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files?encoding=base64 round-trips binary bytes", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const bytes = new Uint8Array([0, 1, 2, 254, 255]);
+		await writeFile(join(ws, "blob.bin"), bytes);
+		const res = await fetch(
+			`${handle.url}/burrows/${burrow.id}/files?path=blob.bin&encoding=base64`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { contents: string; encoding: string };
+		expect(body.encoding).toBe("base64");
+		expect(Array.from(Buffer.from(body.contents, "base64"))).toEqual(Array.from(bytes));
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files for missing path → 404", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files?path=ghost.txt`);
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: { code: string } };
+		expect(body.error.code).toBe("not_found");
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files without ?path → 400", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`);
+		expect(res.status).toBe(400);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files for unknown burrow → 404", async () => {
+		const res = await fetch(`${handle.url}/burrows/bur_nope/files?path=x.txt`);
+		expect(res.status).toBe(404);
 	});
 
 	/* ------------------------------------------------------------------- */

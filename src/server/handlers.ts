@@ -48,6 +48,12 @@ import { NETWORK_POLICIES, type NetworkPolicy } from "../provider/types.ts";
 import type { AgentRuntime, InstallCheckResult } from "../runtime/runtime.ts";
 import { jsonResponse, ndjsonResponse } from "./response.ts";
 import type { RouteContext, RouteHandler } from "./types.ts";
+import {
+	readWorkspaceFile,
+	type WorkspaceFileEncoding,
+	type WorkspaceFileInput,
+	writeWorkspaceFiles,
+} from "./workspace-files.ts";
 
 interface BurrowListFilterShape {
 	kind?: BurrowKind;
@@ -205,6 +211,63 @@ function parseBoolean(raw: string | null, label: string): boolean | undefined {
  * CLI's `normalizeKindFilter` (src/cli/commands/events.ts) so HTTP and CLI
  * accept the same `--kind` syntax.
  */
+const WORKSPACE_FILE_ENCODINGS = ["utf-8", "base64"] as const;
+
+/**
+ * Validate the wire shape for a `WorkspaceFile` entry on the seed/files
+ * endpoints. Path-resolution (symlink walk + reserved-entry guard) lives in
+ * `resolveWorkspaceFilePath`; this is the synchronous body-shape check that
+ * fires before any filesystem work, so a malformed batch is rejected with
+ * 400 + no partial writes.
+ */
+function parseWorkspaceFile(raw: unknown, index: number): WorkspaceFileInput {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+		throw new ValidationError(`files[${index}] must be an object`);
+	}
+	const entry = raw as Record<string, unknown>;
+	const pathValue = entry.path;
+	if (typeof pathValue !== "string" || pathValue.length === 0) {
+		throw new ValidationError(`files[${index}].path is required and must be a non-empty string`);
+	}
+	const contentsValue = entry.contents;
+	if (typeof contentsValue !== "string") {
+		throw new ValidationError(`files[${index}].contents is required and must be a string`);
+	}
+	const out: WorkspaceFileInput = { path: pathValue, contents: contentsValue };
+	if (entry.encoding !== undefined && entry.encoding !== null) {
+		if (
+			typeof entry.encoding !== "string" ||
+			!(WORKSPACE_FILE_ENCODINGS as readonly string[]).includes(entry.encoding)
+		) {
+			throw new ValidationError(
+				`files[${index}].encoding must be one of: ${WORKSPACE_FILE_ENCODINGS.join(", ")}`,
+			);
+		}
+		out.encoding = entry.encoding as WorkspaceFileEncoding;
+	}
+	if (entry.mode !== undefined && entry.mode !== null) {
+		const m = entry.mode;
+		if (typeof m !== "number" || !Number.isInteger(m) || m < 0 || m > 0o777) {
+			throw new ValidationError(
+				`files[${index}].mode must be an integer in [0, 0o777]; got ${String(m)}`,
+			);
+		}
+		out.mode = m;
+	}
+	return out;
+}
+
+function parseWriteFilesBody(body: Record<string, unknown>): WorkspaceFileInput[] {
+	const filesRaw = body.files;
+	if (!Array.isArray(filesRaw)) {
+		throw new ValidationError("field 'files' is required and must be an array");
+	}
+	if (filesRaw.length === 0) {
+		throw new ValidationError("field 'files' must contain at least one entry");
+	}
+	return filesRaw.map((entry, i) => parseWorkspaceFile(entry, i));
+}
+
 function parseKindFilter(values: string[]): string[] | undefined {
 	const set = new Set<string>();
 	for (const raw of values) {
@@ -267,6 +330,49 @@ function resumeBurrow(client: Client): RouteHandler {
 }
 
 /**
+ * `POST /burrows/:id/files` — write files into a burrow's workspace (R-07).
+ * Same path-validation contract as `POST /burrows` with `seed`: relative
+ * paths only, no `..` traversal, no symlink escapes, no overwrites of
+ * `.git/` or sandbox-owned paths. The batch is all-or-nothing — paths are
+ * validated up front before any open handle, so a single rejected entry
+ * returns 400 without partial writes.
+ */
+function writeFilesHandler(client: Client): RouteHandler {
+	return async (ctx) => {
+		const id = requireParam(ctx, "id");
+		const burrow = client.burrows.get(id);
+		const body = await readJsonBody(ctx);
+		const files = parseWriteFilesBody(body);
+		await writeWorkspaceFiles(burrow.workspacePath, files);
+		return jsonResponse(200, { written: files.length });
+	};
+}
+
+/**
+ * `GET /burrows/:id/files?path=…&encoding=…` — read one file from a
+ * burrow's workspace. Same path-validation contract as `writeFiles`. Used
+ * by orchestrators (e.g. warren) to reap mulch records and other run
+ * outputs back over the wire. Default encoding is `utf-8`; pass
+ * `encoding=base64` for binary payloads.
+ */
+function readFileHandler(client: Client): RouteHandler {
+	return async (ctx) => {
+		const id = requireParam(ctx, "id");
+		const burrow = client.burrows.get(id);
+		const path = ctx.url.searchParams.get("path");
+		if (path === null || path.length === 0) {
+			throw new ValidationError("query param 'path' is required");
+		}
+		const encodingRaw = ctx.url.searchParams.get("encoding");
+		const encoding =
+			parseEnum<WorkspaceFileEncoding>(encodingRaw, "encoding", WORKSPACE_FILE_ENCODINGS) ??
+			"utf-8";
+		const file = await readWorkspaceFile(burrow.workspacePath, path, encoding);
+		return jsonResponse(200, file);
+	};
+}
+
+/**
  * `POST /burrows` — provision a project burrow (SPEC §15.1, §16). The body
  * mirrors `BurrowUpInput`: `projectRoot` is required, the rest are optional
  * overrides for `burrow.toml` defaults. Heavy lifting (doctor, secrets,
@@ -294,7 +400,31 @@ function createBurrow(client: Client): RouteHandler {
 		if (provider !== undefined) input.provider = provider;
 		const agents = optionalStringArray(body, "agents");
 		if (agents !== undefined) input.agents = agents;
+
+		// Validate the seed payload upfront — bad shape rejects without
+		// provisioning. Path resolution still happens after `up()` returns
+		// because it needs the realpath-d workspace root.
+		let seedFiles: WorkspaceFileInput[] | null = null;
+		if (body.seed !== undefined && body.seed !== null) {
+			if (typeof body.seed !== "object" || Array.isArray(body.seed)) {
+				throw new ValidationError("field 'seed' must be a JSON object");
+			}
+			seedFiles = parseWriteFilesBody(body.seed as Record<string, unknown>);
+		}
+
 		const burrow = await client.burrows.up(input);
+		if (seedFiles !== null) {
+			try {
+				await writeWorkspaceFiles(burrow.workspacePath, seedFiles);
+			} catch (err) {
+				// Atomic with provisioning: a failed seed write rolls the burrow
+				// back so the caller never sees a half-seeded workspace
+				// (acceptance pl-2467 step 3 #1). Cleanup is best-effort —
+				// failing to destroy still surfaces the original error.
+				await client.burrows.destroy(burrow.id, { archive: false }).catch(() => {});
+				throw err;
+			}
+		}
 		return jsonResponse(201, burrow);
 	};
 }
@@ -687,6 +817,10 @@ export function handlerFor(client: Client, method: string, pattern: string): Rou
 			return stopBurrow(client);
 		case "POST /burrows/:id/resume":
 			return resumeBurrow(client);
+		case "POST /burrows/:id/files":
+			return writeFilesHandler(client);
+		case "GET /burrows/:id/files":
+			return readFileHandler(client);
 		case "GET /burrows/:id/runs":
 			return listRunsByBurrow(client);
 		case "POST /burrows/:id/runs":

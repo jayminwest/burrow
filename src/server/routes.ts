@@ -87,6 +87,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
 	{ method: "DELETE", pattern: "/burrows/:id" },
 	{ method: "POST", pattern: "/burrows/:id/stop" },
 	{ method: "POST", pattern: "/burrows/:id/resume" },
+	{ method: "POST", pattern: "/burrows/:id/files" },
+	{ method: "GET", pattern: "/burrows/:id/files" },
 
 	{ method: "GET", pattern: "/burrows/:id/runs" },
 	{ method: "POST", pattern: "/burrows/:id/runs" },
