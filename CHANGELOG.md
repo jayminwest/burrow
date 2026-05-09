@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-05-09
+
+### Fixed
+
+- **Default-allow `ANTHROPIC_*` env vars without project `burrow.toml [env]`
+  (`burrow-e9e7`).** A fresh project clone with no `burrow.toml` started
+  `claude-code` inside the sandbox with an empty env block, so
+  `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_BASE_URL` /
+  `CLAUDE_CODE_OAUTH_TOKEN` set on the burrow process never reached the
+  agent — the CLI then errored on first call. New optional
+  `AgentRuntime.envPassthrough` lets a built-in runtime declare the host
+  env names its CLI consults at startup; `runUpCommand` unions every
+  effective agent's `envPassthrough` (skipping agents with
+  `forwardCredentials = false`) onto `SandboxProfile.envPassthrough`, so
+  the runtime's intrinsic env contract no longer requires a per-project
+  `[env]` block. `claude-code` declares the four names above. Per-project
+  keys (`DATABASE_URL` etc.) still belong in `burrow.toml [env]`.
+
 ## [0.2.5] - 2026-05-09
 
 ### Fixed
@@ -382,7 +400,8 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.6...HEAD
+[0.2.6]: https://github.com/jayminwest/burrow/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/jayminwest/burrow/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jayminwest/burrow/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jayminwest/burrow/compare/v0.2.2...v0.2.3
