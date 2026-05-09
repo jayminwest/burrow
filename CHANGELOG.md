@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-05-09
+
+### Added
+
+- **Workspace seed + files HTTP API (R-07, `burrow-30c7`).** `POST
+  /burrows` accepts an optional `seed: { files: WorkspaceFile[] }`
+  that's written atomically with provisioning — a failed write rolls
+  back the burrow. New `POST /burrows/:id/files` and
+  `GET /burrows/:id/files` close the warren↔burrow seam-violation by
+  letting orchestrators write/read workspace files over HTTP instead
+  of touching disk directly. Both routes share a single writer (opens
+  with `O_NOFOLLOW`) and reader, gated by
+  `resolveWorkspaceFilePath`. Closes plan `pl-2467`.
+- **`HttpFilesClient` namespace + `seed.files` on
+  `HttpBurrowUpInput` (`burrow-ba5c`).** `HttpClient.files` mirrors
+  `POST/GET /burrows/:id/files` for post-provision writes and reaping;
+  `up()` forwards `seed.files` on the create call. Wire shape and
+  errors round-trip — path-validation rejections rehydrate to
+  `ValidationError`, missing files to `NotFoundError`. The serialize
+  helper is shared between create-with-seed and `files.write` so both
+  paths emit identical payloads.
+- **`resolveWorkspaceFilePath` primitive
+  (`src/server/workspace-paths.ts`, `burrow-9dbd`).** Returns a
+  canonical path inside the realpath'd workspace root or throws
+  `ValidationError`. Rejects empty/NUL paths, absolute paths, `..`
+  segments, the `.git` / `.gitconfig.burrow` reserved entries (and
+  any descendant), and any path whose segment-by-segment walk crosses
+  a symlink whose target escapes the workspace. Symlinks are followed
+  manually via `readlink` so dangling escape symlinks don't slip past
+  `fs.realpath`'s `ENOENT`; depth capped at 40. Handlers still apply
+  `O_NOFOLLOW` on actual writes to close the TOCTOU window.
+- **OpenAPI surface for workspace-seed HTTP API (`burrow-da98`).**
+  `WorkspaceFile`, `WriteFilesBody`, `WriteFilesResponse` schemas and
+  the `writeFiles` + `readFile` operations on `/burrows/{id}/files`,
+  plus the optional `seed` payload on `POST /burrows`. Lets warren and
+  any future external consumer codegen typed clients against the new
+  surface.
+
+### Fixed
+
+- **`Bun.serve` `idleTimeout: 0` so NDJSON streams survive quiet
+  stretches (`burrow-3d45`).** Bun's 10s default force-closed
+  long-lived streaming routes (`/runs/:id/stream`,
+  `/burrows/:id/events`, `/watch`) during agent silence, killing
+  warren's `bridgeRunStream` with `ECONNRESET`. `bindTcp` and
+  `bindUnix` now disable the idle timeout.
+- **Idempotent tag + GitHub-release steps in publish workflow.** The
+  v0.2.3 publish run failed at "Tag release" because the tag had been
+  created manually before the workflow ran, even though `npm publish`
+  had already succeeded; the non-zero exit prevented "Create GitHub
+  release" from running. Both steps now check
+  `git rev-parse --verify` / `git ls-remote --exit-code --tags` /
+  `gh release view` before acting and no-op cleanly when the artifact
+  already exists. Future manually-tagged releases or workflow re-runs
+  won't fail the job.
+
 ## [0.2.3] - 2026-05-09
 
 ### Fixed
@@ -293,7 +349,9 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/jayminwest/burrow/compare/v0.2.3...v0.2.4
+[0.2.3]: https://github.com/jayminwest/burrow/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/jayminwest/burrow/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/jayminwest/burrow/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/jayminwest/burrow/compare/v0.1.0...v0.2.0
