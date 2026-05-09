@@ -63,8 +63,16 @@ jobs:
         if: steps.version-check.outputs.publish == 'true'
         run: |
           VERSION="${{ steps.version-check.outputs.version }}"
-          git tag "v$VERSION"
-          git push origin "v$VERSION"
+          if git rev-parse --verify "v$VERSION" >/dev/null 2>&1; then
+            echo "Tag v$VERSION already exists locally; skipping create"
+          else
+            git tag "v$VERSION"
+          fi
+          if git ls-remote --exit-code --tags origin "v$VERSION" >/dev/null 2>&1; then
+            echo "Tag v$VERSION already on remote; skipping push"
+          else
+            git push origin "v$VERSION"
+          fi
 
       - name: Extract changelog notes
         if: steps.version-check.outputs.publish == 'true'
@@ -87,6 +95,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           VERSION="${{ steps.version-check.outputs.version }}"
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists; skipping"
+            exit 0
+          fi
           if [ "${{ steps.changelog.outputs.found }}" = "true" ]; then
             gh release create "v$VERSION" \
               --title "v$VERSION" \
