@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import type { SandboxProfile, SpawnCommand } from "../types.ts";
-import { buildBwrapArgv, SYSTEM_RO_MOUNTS } from "./bwrap.ts";
+import {
+	buildBwrapArgv,
+	DEFAULT_SANDBOX_GID,
+	DEFAULT_SANDBOX_UID,
+	SYSTEM_RO_MOUNTS,
+} from "./bwrap.ts";
 
 function baseProfile(over: Partial<SandboxProfile> = {}): SandboxProfile {
 	return {
@@ -142,6 +147,33 @@ describe("buildBwrapArgv", () => {
 		const argv = buildBwrapArgv(baseProfile(), cmd(), { hostEnv: {} });
 		expect(argv).toContain("--die-with-parent");
 		expectAdjacent(argv, "--chdir", "/workspace");
+	});
+
+	test("defaults to non-root --uid/--gid so claude-code etc. don't refuse on root hosts (burrow-0329)", () => {
+		const argv = buildBwrapArgv(baseProfile(), cmd(), { hostEnv: {} });
+		expectAdjacent(argv, "--uid", String(DEFAULT_SANDBOX_UID));
+		expectAdjacent(argv, "--gid", String(DEFAULT_SANDBOX_GID));
+		expect(DEFAULT_SANDBOX_UID).not.toBe(0);
+		expect(DEFAULT_SANDBOX_GID).not.toBe(0);
+	});
+
+	test("profile.runAsUid/runAsGid override the defaults", () => {
+		const argv = buildBwrapArgv(baseProfile({ runAsUid: 1500, runAsGid: 1501 }), cmd(), {
+			hostEnv: {},
+		});
+		expectAdjacent(argv, "--uid", "1500");
+		expectAdjacent(argv, "--gid", "1501");
+		expect(argv).not.toContain(String(DEFAULT_SANDBOX_UID));
+	});
+
+	test("--uid/--gid emitted after --unshare-all (bwrap requires userns first)", () => {
+		const argv = buildBwrapArgv(baseProfile(), cmd(), { hostEnv: {} });
+		const unshareIdx = argv.indexOf("--unshare-all");
+		const uidIdx = argv.indexOf("--uid");
+		const gidIdx = argv.indexOf("--gid");
+		expect(unshareIdx).toBeGreaterThanOrEqual(0);
+		expect(uidIdx).toBeGreaterThan(unshareIdx);
+		expect(gidIdx).toBeGreaterThan(unshareIdx);
 	});
 
 	test("relative cwd resolves under /workspace", () => {

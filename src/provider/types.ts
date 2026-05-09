@@ -34,6 +34,21 @@ export interface SandboxProfile {
 	 * builders use this to allow only loopback to that exact endpoint.
 	 */
 	proxyAddress?: { host: string; port: number };
+	/**
+	 * Linux only: uid the sandboxed process runs as inside the userns
+	 * (`bwrap --uid`). Defaults to a non-root constant (1000). The host's
+	 * uid is remapped via `uid_map` so workspace files owned by the caller
+	 * appear as this uid inside. Override only when the caller has a
+	 * specific reason — e.g. matching the uid of an existing image's user.
+	 *
+	 * Required (in spirit): without `--uid`, the userns inherits the host's
+	 * caller uid. When burrow runs as root (e.g. inside a Docker container
+	 * without an explicit USER), the agent sees `getuid() == 0` and tools
+	 * like claude-code refuse to run.
+	 */
+	runAsUid?: number;
+	/** Linux only: gid the sandboxed process runs as. Defaults to 1000. */
+	runAsGid?: number;
 }
 
 export interface SpawnCommand {

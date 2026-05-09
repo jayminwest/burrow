@@ -33,6 +33,15 @@ export const SYSTEM_RO_MOUNTS: readonly string[] = [
 	"/opt",
 ];
 
+/**
+ * Default uid/gid the sandboxed process runs as when `SandboxProfile.runAsUid`
+ * / `runAsGid` aren't set. Anything non-zero would do — 1000 is the conventional
+ * "first interactive user" id and what most distro images use, so workspace
+ * tooling that hardcodes uid==1000 (e.g. /home/user paths) keeps working.
+ */
+export const DEFAULT_SANDBOX_UID = 1000;
+export const DEFAULT_SANDBOX_GID = 1000;
+
 export interface BuildBwrapOptions {
 	/** Used to resolve `envPassthrough` names. Defaults to `process.env`. */
 	hostEnv?: Record<string, string | undefined>;
@@ -51,6 +60,13 @@ export function buildBwrapArgv(
 	if (profile.network === "open") argv.push("--share-net");
 	else if (profile.network === "restricted" && profile.proxyAddress) argv.push("--share-net");
 	argv.push("--die-with-parent");
+
+	// Force the sandboxed pid 1 to a non-root uid/gid inside the userns. Without
+	// this the new userns inherits the caller's uid mapping; when burrow runs
+	// as host root (e.g. warren's Dockerized posture) the agent sees
+	// getuid()==0 and tooling like claude-code refuses to run.
+	argv.push("--uid", String(profile.runAsUid ?? DEFAULT_SANDBOX_UID));
+	argv.push("--gid", String(profile.runAsGid ?? DEFAULT_SANDBOX_GID));
 
 	argv.push("--proc", "/proc");
 	argv.push("--dev", "/dev");
