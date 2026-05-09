@@ -103,6 +103,14 @@ export interface BurrowUpInput {
 	originUrl?: string;
 	network?: NetworkPolicy;
 	provider?: string;
+	/**
+	 * Built-in runtimes the caller wants enabled as `[[agents]]` patch rows
+	 * for this burrow (warren-8526 / burrow-55e3). Each id is appended to the
+	 * project's `burrow.toml [[agents]]` (deduped); the merged list feeds
+	 * toolchain bin-dir + credential-path collection so the sandbox can
+	 * actually exec the runtime's binary.
+	 */
+	agents?: readonly string[];
 }
 
 /**
@@ -166,6 +174,7 @@ export class BurrowsClient {
 		if (input.originUrl !== undefined) options.originUrl = input.originUrl;
 		if (input.network !== undefined) options.network = input.network;
 		if (input.provider !== undefined) options.provider = input.provider;
+		if (input.agents !== undefined) options.agents = input.agents;
 		const result = await runUpCommand({
 			client: this.client,
 			projectRoot: input.projectRoot,

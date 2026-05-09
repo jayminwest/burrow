@@ -212,6 +212,55 @@ describe("server handlers", () => {
 		rmSync(projectRoot, { recursive: true, force: true });
 	});
 
+	test("POST /burrows forwards `agents` onto the burrow profile (burrow-55e3)", async () => {
+		// Wire-through for warren-8526: the HTTP body's `agents` array must
+		// reach runUpCommand so a built-in runtime gets enabled even when the
+		// project clone has no burrow.toml. Mock agent's installCheck returns a
+		// resolved path so we can assert the bin dir lands on toolchainPaths.
+		const projectRoot = mkTmp();
+		client.agents.register({
+			id: "wired-claude",
+			displayName: "Wired Claude",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["claude"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({
+				installed: true,
+				version: "2.1",
+				path: "/usr/local/bin/claude",
+			}),
+		});
+		client.burrows.setUpOverrides({
+			skipDoctor: true,
+			materializer: async (opts) => ({
+				workspacePath: opts.workspacePath,
+				source: { kind: "worktree", branch: opts.branch, hostClonePath: "/host" },
+				identity: null,
+			}),
+		});
+		const res = await fetch(`${handle.url}/burrows`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ projectRoot, agents: ["wired-claude"] }),
+		});
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as Burrow;
+		const profile = client.burrows.get(body.id).profileJson as { toolchainPaths: string[] };
+		expect(profile.toolchainPaths).toContain("/usr/local/bin");
+		rmSync(projectRoot, { recursive: true, force: true });
+	});
+
+	test("POST /burrows with non-string entry in `agents` → 400", async () => {
+		const res = await fetch(`${handle.url}/burrows`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ projectRoot: "/repos/web", agents: ["claude-code", 42] }),
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string } };
+		expect(body.error.code).toBe("validation_error");
+	});
+
 	test("POST /burrows without projectRoot → 400", async () => {
 		const res = await fetch(`${handle.url}/burrows`, {
 			method: "POST",

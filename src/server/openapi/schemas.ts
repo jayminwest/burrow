@@ -260,6 +260,12 @@ export const CreateBurrowBodySchema = component(
 		originUrl: z.string().optional(),
 		network: z.enum(NETWORK_POLICIES).optional(),
 		provider: z.string().optional(),
+		agents: z
+			.array(z.string().min(1))
+			.optional()
+			.describe(
+				"Built-in runtime ids to enable as `[[agents]]` patch rows. Forwarded by orchestrators (e.g. warren) so the sandbox profile mounts the runtime's binary even when the project clone has no `burrow.toml`.",
+			),
 	}),
 );
 

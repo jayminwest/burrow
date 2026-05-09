@@ -102,6 +102,13 @@ export interface HttpBurrowUpInput {
 	originUrl?: string;
 	network?: NetworkPolicy;
 	provider?: string;
+	/**
+	 * Built-in runtime ids to enable as `[[agents]]` patch rows for this
+	 * burrow (burrow-55e3). Forwarded by warren so the sandbox profile
+	 * mounts the runtime's binary even when the project clone has no
+	 * `burrow.toml`.
+	 */
+	agents?: readonly string[];
 }
 
 export interface HttpEventTailFilter {
@@ -245,6 +252,7 @@ export class HttpBurrowsClient {
 		if (input.originUrl !== undefined) body.originUrl = input.originUrl;
 		if (input.network !== undefined) body.network = input.network;
 		if (input.provider !== undefined) body.provider = input.provider;
+		if (input.agents !== undefined) body.agents = [...input.agents];
 		const row = await this.transport.request<unknown>({
 			method: "POST",
 			path: "/burrows",

@@ -28,7 +28,7 @@ import {
 	materializeProjectWorkspace,
 } from "../../provider/local/workspace.ts";
 import type { NetworkPolicy, SandboxProfile } from "../../provider/types.ts";
-import type { BurrowToml } from "../../schemas/burrow-toml.ts";
+import type { BurrowToml, BurrowTomlAgent } from "../../schemas/burrow-toml.ts";
 import { resolveEnv } from "../../secrets/env.ts";
 import type { OpResolver } from "../../secrets/op.ts";
 import { loadSecretStore } from "../../secrets/store.ts";
@@ -50,6 +50,17 @@ export interface UpCommandOptions {
 	network?: string;
 	provider?: string;
 	json?: boolean;
+	/**
+	 * Additional `[[agents]]` patch rows the caller wants enabled — typically
+	 * forwarded from a remote orchestrator (warren-8526) that knows which
+	 * agent it is about to spawn but cannot edit the project's `burrow.toml`.
+	 * Each entry is treated as a built-in patch row (`{ id }`); existing
+	 * `burrow.toml [[agents]]` entries with the same id are preserved
+	 * verbatim. The merged list feeds both `collectToolchainPaths` and
+	 * `collectCredentialPaths`, so a forwarded `claude-code` row both mounts
+	 * `claude`'s bin dir and forwards the host's `~/.claude` credentials.
+	 */
+	agents?: readonly string[];
 }
 
 export interface UpCommandInput {
@@ -170,16 +181,17 @@ export async function runUpCommand(input: UpCommandInput): Promise<UpCommandResu
 	}
 	const workspace = await materializer(matOpts);
 
+	const effectiveAgents = resolveEffectiveAgents(burrowToml, input.options.agents);
 	const toolchainPaths = await collectToolchainPaths({
 		doctorReport,
-		burrowToml,
+		agents: effectiveAgents,
 		registry: input.client.agents,
 		symlinkWalker: input.symlinkWalker ?? ((binDirs) => walkToolchainBinSymlinks({ binDirs })),
 	});
 	const home = input.home ?? input.hostEnv?.HOME ?? process.env.HOME ?? homedir();
 	const readOnlyMounts = mergeReadOnlyMounts(
 		await collectCredentialPaths({
-			burrowToml,
+			agents: effectiveAgents,
 			registry: input.client.agents,
 		}),
 		resolveSandboxReadOnlyPaths(burrowToml?.sandbox?.read_only_paths ?? [], home),
@@ -229,9 +241,36 @@ function resolveNetworkPolicy(flag: string | undefined, config: BurrowToml | nul
 
 interface CollectToolchainPathsInput {
 	doctorReport: DoctorReport | null;
-	burrowToml: BurrowToml | null;
+	agents: readonly BurrowTomlAgent[];
 	registry: AgentsClient;
 	symlinkWalker: (binDirs: string[]) => string[];
+}
+
+/**
+ * Merge `burrow.toml [[agents]]` rows with caller-forwarded agent ids
+ * (`UpCommandOptions.agents`). Existing config rows are preserved as-is so
+ * a project's explicit `forwardCredentials = false` still wins; forwarded
+ * ids that don't already appear are appended as bare `{ id }` patch rows.
+ *
+ * Used by warren (warren-8526 / burrow-55e3) to enable a built-in runtime at
+ * up-time when the project clone has no burrow.toml — without this, the
+ * sandbox bakes an empty `toolchainPaths` and the agent's binary fails
+ * `execvp` inside bwrap.
+ */
+function resolveEffectiveAgents(
+	burrowToml: BurrowToml | null,
+	requested: readonly string[] | undefined,
+): readonly BurrowTomlAgent[] {
+	const declared = burrowToml?.agents ?? [];
+	if (!requested || requested.length === 0) return declared;
+	const ids = new Set(declared.map((a) => a.id));
+	const out: BurrowTomlAgent[] = [...declared];
+	for (const id of requested) {
+		if (id.length === 0 || ids.has(id)) continue;
+		ids.add(id);
+		out.push({ id });
+	}
+	return out;
 }
 
 /**
@@ -261,7 +300,7 @@ async function collectToolchainPaths(input: CollectToolchainPathsInput): Promise
 		if (row.resolvedPath) toolchainBins.push(row.resolvedPath);
 	}
 	const agentBins: string[] = [];
-	for (const agent of input.burrowToml?.agents ?? []) {
+	for (const agent of input.agents) {
 		const rt = input.registry.get(agent.id);
 		if (!rt) continue;
 		try {
@@ -319,7 +358,7 @@ function mergeReadOnlyMounts(...sources: readonly (readonly string[])[]): string
 }
 
 interface CollectCredentialPathsInput {
-	burrowToml: BurrowToml | null;
+	agents: readonly BurrowTomlAgent[];
 	registry: AgentsClient;
 }
 
@@ -337,7 +376,7 @@ interface CollectCredentialPathsInput {
 async function collectCredentialPaths(input: CollectCredentialPathsInput): Promise<string[]> {
 	const seen = new Set<string>();
 	const out: string[] = [];
-	for (const agent of input.burrowToml?.agents ?? []) {
+	for (const agent of input.agents) {
 		if (agent.forwardCredentials === false) continue;
 		const rt = input.registry.get(agent.id);
 		if (!rt?.credentialPaths) continue;

@@ -114,6 +114,23 @@ function optionalString(body: Record<string, unknown>, key: string): string | un
 	return value;
 }
 
+function optionalStringArray(body: Record<string, unknown>, key: string): string[] | undefined {
+	const value = body[key];
+	if (value === undefined || value === null) return undefined;
+	if (!Array.isArray(value)) {
+		throw new ValidationError(`field '${key}' must be an array of strings`);
+	}
+	const out: string[] = [];
+	for (let i = 0; i < value.length; i++) {
+		const entry = value[i];
+		if (typeof entry !== "string" || entry.length === 0) {
+			throw new ValidationError(`field '${key}[${i}]' must be a non-empty string`);
+		}
+		out.push(entry);
+	}
+	return out;
+}
+
 function requireParam(ctx: RouteContext, key: string): string {
 	const value = ctx.params[key];
 	if (value === undefined || value.length === 0) {
@@ -275,6 +292,8 @@ function createBurrow(client: Client): RouteHandler {
 		if (network !== undefined) input.network = network;
 		const provider = optionalString(body, "provider");
 		if (provider !== undefined) input.provider = provider;
+		const agents = optionalStringArray(body, "agents");
+		if (agents !== undefined) input.agents = agents;
 		const burrow = await client.burrows.up(input);
 		return jsonResponse(201, burrow);
 	};

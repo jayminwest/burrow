@@ -657,6 +657,80 @@ read_only_paths = ["/host/shared", "/host/extra"]
 		expect(profile.readOnlyMounts).toEqual([]);
 	});
 
+	test("options.agents enables a built-in runtime when burrow.toml has none (burrow-55e3)", async () => {
+		// Repro for warren-8526: warren spawns into a project clone that has no
+		// burrow.toml, so collectToolchainPaths used to return [] and the
+		// sandbox could not exec the agent's binary. Forwarding `agents:
+		// ["claude-code"]` synthesizes a patch row so the runtime's
+		// installCheck runs and contributes its bin dir to toolchainPaths.
+		client.agents.register({
+			id: "fake-claude",
+			displayName: "Fake Claude",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["claude"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({
+				installed: true,
+				version: "2.1.138",
+				path: "/usr/local/bin/claude",
+			}),
+			credentialPaths: async () => ["/host/.claude"],
+		});
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: { agents: ["fake-claude"] },
+			materializer: fakeMaterializer,
+			skipDoctor: true,
+		});
+		const profile = result.burrow.profileJson as {
+			toolchainPaths: string[];
+			readOnlyMounts: string[];
+		};
+		expect(profile.toolchainPaths).toContain("/usr/local/bin");
+		expect(profile.readOnlyMounts).toContain("/host/.claude");
+	});
+
+	test("options.agents merges with burrow.toml [[agents]] without duplicating ids", async () => {
+		writeFileSync(
+			join(projectRoot, "burrow.toml"),
+			`[[agents]]\nid = "configured"\nforwardCredentials = false\n`,
+		);
+		client.agents.register({
+			id: "configured",
+			displayName: "Configured",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["x"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({ installed: true, version: "1", path: "/opt/x/bin/x" }),
+			credentialPaths: async () => ["/host/.x"],
+		});
+		// Forwarded "configured" must NOT shadow the project's
+		// `forwardCredentials = false` row — credentialPaths stays empty.
+		// "added" is a fresh patch and contributes its bin dir.
+		client.agents.register({
+			id: "added",
+			displayName: "Added",
+			supportsResume: false,
+			buildSpawnCommand: () => ({ argv: ["y"] }),
+			parseEvents: () => [],
+			installCheck: async () => ({ installed: true, version: "2", path: "/opt/y/bin/y" }),
+		});
+		const result = await runUpCommand({
+			client,
+			projectRoot,
+			options: { agents: ["configured", "added"] },
+			materializer: fakeMaterializer,
+			skipDoctor: true,
+		});
+		const profile = result.burrow.profileJson as {
+			toolchainPaths: string[];
+			readOnlyMounts: string[];
+		};
+		expect(profile.toolchainPaths).toEqual(["/opt/x/bin", "/opt/y/bin"]);
+		expect(profile.readOnlyMounts).toEqual([]);
+	});
+
 	test("default_branch from burrow.toml is used when --base-branch is omitted", async () => {
 		writeFileSync(join(projectRoot, "burrow.toml"), `[project]\ndefault_branch = "trunk"\n`);
 		let captured: MaterializeProjectOptions | undefined;
