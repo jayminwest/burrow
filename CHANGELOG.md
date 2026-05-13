@@ -7,8 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-05-13
+
 ### Added
 
+- **Pi V1 resume via `--session-dir` + `extractMetadata` hook
+  (`burrow-4d8b`, SPEC §12.1/§12.2).** `pi` v0.74.0 doesn't surface
+  `session_id` on `agent_end`; the only stable per-run source is the
+  `--session-dir` filesystem layout (`<ts>_<uuid>.jsonl` whose first
+  line is `{type:"session", id:"<uuid>"}`). `PI_FORCED_ARGV` now swaps
+  `--no-session` for `--session-dir .pi/sessions` (relative path,
+  resolved against the agent cwd so it works under both bwrap and
+  sandbox-exec); `prepareWorkspace` creates the dir under the
+  workspace. New optional `AgentRuntime.extractMetadata(ctx)` hook
+  runs after a clean exit; the dispatcher merges the returned object
+  into `Run.metadataJson` via `RunsRepo.patchMetadata` (failures are
+  swallowed — extraction is advisory). `piRuntime.extractMetadata`
+  reads the newest `*.jsonl` in the per-burrow session dir and
+  persists `session_id`; `piRuntime.buildResumeCommand` passes
+  `--session <id>` (alongside the pinned `--session-dir`) when the
+  prior run carries one, falling back to a fresh argv otherwise.
+  `supportsResume` flips to `true` for `pi`.
 - **Mid-run steering for stdin-held runtimes (`burrow-250d`,
   SPEC §13.5).** Runtimes that keep a live stdin RPC channel for the
   duration of a turn — today that's `pi` via `--mode rpc`, which
@@ -34,6 +53,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatcher; the bwrap and sandbox-exec wrappers both supply it via
   `Bun.Subprocess.stdin.flush()` so writes are sequenced against the
   child's buffer.
+- **`frontmatter.provider`/`model` overrides flow into `piRuntime`
+  argv (`burrow-b5b4`).** `SpawnContext` gains an optional
+  `frontmatter: { provider?, model? }` field that the dispatcher
+  hydrates from `Run.metadataJson.frontmatter` — the channel warren
+  (and any other upstream caller) uses to push resolved operator
+  overrides + project defaults + agent frontmatter through to a
+  built-in runtime. `piRuntime`'s new `buildPiArgv` substitutes the
+  override provider into the trailing `PI_DEFAULT_PROVIDER` slot of
+  `PI_FORCED_ARGV` and replaces `PI_DEFAULT_MODEL` with the override
+  model; empty/whitespace values fall back to today's pinned defaults.
+  `envPassthrough` stays narrow (anthropic trio only) — non-anthropic
+  keys still opt in via `burrow.toml [env]` per `mx-d46d5d`.
+
+### Fixed
+
+- **Hold stdin open until `agent_end` for `pi` runtime (`burrow-5db3`).**
+  `pi` v0.74.0 exits the instant stdin closes (`mx-d9b3ad`), so the
+  prior write-and-end-at-spawn dispatcher truncated real `pi` runs to
+  `response` + `agent_start` + `turn_start` with no assistant content.
+  New opt-in stdin-hold contract: `SpawnCommand.holdStdin` /
+  `SpawnResult.closeStdin` plumb the lifetime through `runSandboxed` so
+  callers own the close; `AgentRuntime.shouldCloseStdinOnEvent(event)`
+  is the per-runtime hook the dispatcher polls per persisted event
+  (`pi` matches `agent_end`); `dispatch.ts` wires both, with a
+  defensive close in `finally` so a child that never emits its trigger
+  doesn't leak the FD. Unblocks `burrow-56bb` (the dispatcher e2e test
+  would otherwise observe truncated traces).
 
 ## [0.2.8] - 2026-05-13
 
@@ -490,7 +536,8 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.8...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.9...HEAD
+[0.2.9]: https://github.com/jayminwest/burrow/compare/v0.2.8...v0.2.9
 [0.2.8]: https://github.com/jayminwest/burrow/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/jayminwest/burrow/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/jayminwest/burrow/compare/v0.2.5...v0.2.6
