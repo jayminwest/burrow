@@ -31,7 +31,12 @@ import { runSandboxed } from "../provider/local/sandbox.ts";
 import type { SandboxProfile, SpawnCommand, SpawnResult } from "../provider/types.ts";
 import { type ProxyHandle, type StartProxyOptions, startProxy } from "../proxy/server.ts";
 import { composeCodexPrompt, writeCodexPromptFile } from "../runtime/codex.ts";
-import type { AgentRuntime, InstallCheckResult, RuntimeEvent } from "../runtime/runtime.ts";
+import type {
+	AgentFrontmatter,
+	AgentRuntime,
+	InstallCheckResult,
+	RuntimeEvent,
+} from "../runtime/runtime.ts";
 import type { RunOutcome } from "./run-loop.ts";
 
 /**
@@ -122,6 +127,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		);
 	}
 
+	const frontmatter = readFrontmatter(run.metadataJson);
 	const command = runtime.buildSpawnCommand({
 		burrow,
 		run,
@@ -129,6 +135,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		pendingMessages,
 		envResolved: profile.setEnv ?? {},
 		workspacePath: burrow.workspacePath,
+		...(frontmatter ? { frontmatter } : {}),
 	});
 
 	const spawn = input.spawn ?? runSandboxed;
@@ -397,6 +404,24 @@ function sleepUntil(ms: number, signal: AbortSignal): Promise<void> {
 		};
 		signal.addEventListener("abort", onAbort, { once: true });
 	});
+}
+
+/**
+ * Pull `frontmatter.{provider,model}` off `Run.metadataJson` if an upstream
+ * caller (e.g. warren) stored it there (burrow-b5b4). Strings only; other
+ * shapes are dropped silently. Returns `undefined` when no usable fields
+ * remain so the dispatcher can omit the field from `SpawnContext` rather
+ * than passing an empty object that just adds noise.
+ */
+function readFrontmatter(metadata: unknown): AgentFrontmatter | undefined {
+	if (metadata === null || typeof metadata !== "object") return undefined;
+	const raw = (metadata as Record<string, unknown>).frontmatter;
+	if (raw === null || typeof raw !== "object") return undefined;
+	const obj = raw as Record<string, unknown>;
+	const out: AgentFrontmatter = {};
+	if (typeof obj.provider === "string") out.provider = obj.provider;
+	if (typeof obj.model === "string") out.model = obj.model;
+	return Object.keys(out).length > 0 ? out : undefined;
 }
 
 async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string, void, void> {

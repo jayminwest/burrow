@@ -5,8 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BurrowRow, MessageRow, RunRow } from "../db/schema.ts";
 import {
+	buildPiArgv,
 	encodePiStdin,
 	PI_DEFAULT_MODEL,
+	PI_DEFAULT_PROVIDER,
 	PI_ENV_PASSTHROUGH,
 	PI_FORCED_ARGV,
 	PI_SESSION_DIR,
@@ -99,7 +101,10 @@ describe("piRuntime.buildSpawnCommand", () => {
 
 	test("PI_FORCED_ARGV is the exact frozen prefix (regression guard)", () => {
 		// Frozen list — bumping requires verifying the new flag set against
-		// pi's RPC behavior and regenerating the golden fixtures.
+		// pi's RPC behavior and regenerating the golden fixtures. The
+		// trailing 'anthropic' slot is the default provider that
+		// buildPiArgv swaps out when ctx.frontmatter.provider is set.
+		expect(PI_DEFAULT_PROVIDER).toBe("anthropic");
 		expect([...PI_FORCED_ARGV]).toEqual([
 			"pi",
 			"--mode",
@@ -108,7 +113,7 @@ describe("piRuntime.buildSpawnCommand", () => {
 			PI_SESSION_DIR,
 			"--no-extensions",
 			"--provider",
-			"anthropic",
+			PI_DEFAULT_PROVIDER,
 		]);
 	});
 
@@ -176,6 +181,147 @@ describe("piRuntime.buildSpawnCommand", () => {
 		});
 		expect(cmd.env).toBeUndefined();
 		expect(cmd.cwd).toBeUndefined();
+	});
+});
+
+describe("piRuntime.buildSpawnCommand frontmatter override (burrow-b5b4)", () => {
+	// Warren passes `runs.rendered_agent_json.frontmatter.{provider,model}` —
+	// the dispatcher hydrates it onto SpawnContext.frontmatter, and pi
+	// substitutes the override for its pinned defaults. Empty / whitespace
+	// values fall back to PI_DEFAULT_PROVIDER + PI_DEFAULT_MODEL so a
+	// frontmatter envelope that didn't fill a field doesn't accidentally
+	// emit `--provider ""`.
+	test("substitutes provider + model when both frontmatter fields are set", () => {
+		const cmd = piRuntime.buildSpawnCommand({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			prompt: "p",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+			frontmatter: { provider: "openai", model: "gpt-4o" },
+		});
+		const providerIdx = cmd.argv.indexOf("--provider");
+		expect(providerIdx).toBeGreaterThan(-1);
+		expect(cmd.argv[providerIdx + 1]).toBe("openai");
+		const modelIdx = cmd.argv.indexOf("--model");
+		expect(modelIdx).toBeGreaterThan(-1);
+		expect(cmd.argv[modelIdx + 1]).toBe("gpt-4o");
+	});
+
+	test("model override alone keeps the default provider slot", () => {
+		const cmd = piRuntime.buildSpawnCommand({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			prompt: "p",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+			frontmatter: { model: "claude-opus-4-7" },
+		});
+		const providerIdx = cmd.argv.indexOf("--provider");
+		expect(cmd.argv[providerIdx + 1]).toBe(PI_DEFAULT_PROVIDER);
+		const modelIdx = cmd.argv.indexOf("--model");
+		expect(cmd.argv[modelIdx + 1]).toBe("claude-opus-4-7");
+	});
+
+	test("provider override alone keeps the default model", () => {
+		const cmd = piRuntime.buildSpawnCommand({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			prompt: "p",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+			frontmatter: { provider: "openai" },
+		});
+		const providerIdx = cmd.argv.indexOf("--provider");
+		expect(cmd.argv[providerIdx + 1]).toBe("openai");
+		const modelIdx = cmd.argv.indexOf("--model");
+		expect(cmd.argv[modelIdx + 1]).toBe(PI_DEFAULT_MODEL);
+	});
+
+	test("empty / whitespace frontmatter values fall back to defaults", () => {
+		const cmd = piRuntime.buildSpawnCommand({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			prompt: "p",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+			frontmatter: { provider: "   ", model: "" },
+		});
+		// Whole argv collapses to the no-override shape — guard the prefix
+		// equality so a future change can't silently emit `--provider ""`.
+		expect(cmd.argv.slice(0, PI_FORCED_ARGV.length)).toEqual([...PI_FORCED_ARGV]);
+		const modelIdx = cmd.argv.indexOf("--model");
+		expect(cmd.argv[modelIdx + 1]).toBe(PI_DEFAULT_MODEL);
+	});
+
+	test("undefined frontmatter is a no-op (today's behavior)", () => {
+		const cmd = piRuntime.buildSpawnCommand({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			prompt: "p",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+		});
+		expect(cmd.argv).toEqual([...PI_FORCED_ARGV, "--model", PI_DEFAULT_MODEL]);
+	});
+
+	test("buildResumeCommand honors frontmatter alongside --session", () => {
+		const cmd = piRuntime.buildResumeCommand?.({
+			burrow: fakeBurrow(),
+			run: fakeRun({ id: "run_new" }),
+			priorRun: fakeRun({
+				id: "run_prior",
+				state: "succeeded",
+				metadataJson: { session_id: "sess-xyz" },
+			}),
+			prompt: "continue",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+			frontmatter: { provider: "openai", model: "gpt-4o" },
+		});
+		const providerIdx = cmd?.argv.indexOf("--provider") ?? -1;
+		expect(cmd?.argv[providerIdx + 1]).toBe("openai");
+		const modelIdx = cmd?.argv.indexOf("--model") ?? -1;
+		expect(cmd?.argv[modelIdx + 1]).toBe("gpt-4o");
+		const sessionIdx = cmd?.argv.indexOf("--session") ?? -1;
+		expect(cmd?.argv[sessionIdx + 1]).toBe("sess-xyz");
+	});
+});
+
+describe("buildPiArgv", () => {
+	test("matches PI_FORCED_ARGV + default model with no frontmatter", () => {
+		expect(buildPiArgv()).toEqual([...PI_FORCED_ARGV, "--model", PI_DEFAULT_MODEL]);
+	});
+
+	test("trims surrounding whitespace from provider + model overrides", () => {
+		const argv = buildPiArgv({ provider: "  openai  ", model: "\tgpt-4o\n" });
+		const providerIdx = argv.indexOf("--provider");
+		expect(argv[providerIdx + 1]).toBe("openai");
+		const modelIdx = argv.indexOf("--model");
+		expect(argv[modelIdx + 1]).toBe("gpt-4o");
+	});
+
+	test("PI_FORCED_ARGV stays bit-for-bit identical (the constant is the no-override default)", () => {
+		// Constant must not be mutated across buildPiArgv calls — guards
+		// against an accidental in-place [PI_FORCED_ARGV.length-1] = ...
+		// (the helper uses a copy, but pin the invariant explicitly).
+		buildPiArgv({ provider: "openai", model: "gpt-4o" });
+		expect([...PI_FORCED_ARGV]).toEqual([
+			"pi",
+			"--mode",
+			"rpc",
+			"--session-dir",
+			PI_SESSION_DIR,
+			"--no-extensions",
+			"--provider",
+			PI_DEFAULT_PROVIDER,
+		]);
 	});
 });
 

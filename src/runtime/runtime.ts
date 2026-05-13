@@ -29,6 +29,20 @@ export interface InstallCheckResult {
 	path?: string;
 }
 
+/**
+ * Per-run agent frontmatter resolved by an upstream caller (e.g. warren's
+ * `rendered_agent_json.frontmatter` — operator overrides + project defaults
+ * + agent frontmatter all flatten through this shape). Built-in runtimes
+ * that accept provider / model flags honor these to override their pinned
+ * defaults; empty or whitespace-only values are treated as unset (fall back
+ * to the runtime default). Sourced from `Run.metadataJson.frontmatter` by
+ * the dispatcher (burrow-b5b4).
+ */
+export interface AgentFrontmatter {
+	provider?: string;
+	model?: string;
+}
+
 export interface SpawnContext {
 	burrow: Burrow;
 	run: Run;
@@ -43,6 +57,12 @@ export interface SpawnContext {
 	 * files (e.g. .claude/settings.local.json) operates on the host path.
 	 */
 	workspacePath: string;
+	/**
+	 * Optional per-run agent frontmatter override. Runtimes that accept
+	 * provider / model flags substitute these for their built-in defaults
+	 * when set; runtimes that don't care simply ignore the field.
+	 */
+	frontmatter?: AgentFrontmatter;
 }
 
 export interface ResumeContext extends SpawnContext {

@@ -71,6 +71,7 @@ import type { Message } from "../core/types.ts";
 import type { SpawnCommand } from "../provider/types.ts";
 import { parsePiEvents } from "./parsers/pi.ts";
 import type {
+	AgentFrontmatter,
 	AgentRuntime,
 	ExtractMetadataContext,
 	InstallCheckResult,
@@ -103,10 +104,23 @@ export const PI_DEFAULT_MODEL = "claude-haiku-4-5";
 export const PI_SESSION_DIR = ".pi/sessions";
 
 /**
- * Locked prefix of `pi`'s argv. The trailing `--model <PI_DEFAULT_MODEL>`
- * pair is appended in `buildSpawnCommand` — split out so the test that
- * enforces flag presence can assert the prefix without coupling to the
- * exact pinned model.
+ * Default provider when `SpawnContext.frontmatter.provider` is unset. Kept
+ * separate from `PI_FORCED_ARGV` because `buildPiArgv` substitutes this
+ * slot when an upstream caller (e.g. warren) supplies a non-empty
+ * frontmatter override (burrow-b5b4); the constant continues to express
+ * "what pi runs with no override" so the regression-locked argv shape
+ * stays intact.
+ */
+export const PI_DEFAULT_PROVIDER = "anthropic";
+
+/**
+ * Locked prefix of `pi`'s argv when no frontmatter overrides are in play.
+ * The trailing `--model <PI_DEFAULT_MODEL>` pair is appended in
+ * `buildSpawnCommand` — split out so the test that enforces flag presence
+ * can assert the prefix without coupling to the exact pinned model. When
+ * `SpawnContext.frontmatter.provider` is non-empty `buildPiArgv` swaps the
+ * final `PI_DEFAULT_PROVIDER` slot for the override; otherwise this array
+ * is the rendered prefix verbatim.
  */
 export const PI_FORCED_ARGV: readonly string[] = [
 	PI_BIN,
@@ -116,7 +130,7 @@ export const PI_FORCED_ARGV: readonly string[] = [
 	PI_SESSION_DIR,
 	"--no-extensions",
 	"--provider",
-	"anthropic",
+	PI_DEFAULT_PROVIDER,
 ] as const;
 
 /**
@@ -148,13 +162,13 @@ export const piRuntime: AgentRuntime = {
 
 	buildSpawnCommand(ctx: SpawnContext): SpawnCommand {
 		return {
-			argv: [...PI_FORCED_ARGV, "--model", PI_DEFAULT_MODEL],
+			argv: buildPiArgv(ctx.frontmatter),
 			stdin: encodePiStdin(ctx.prompt, ctx.pendingMessages),
 		};
 	},
 
 	buildResumeCommand(ctx: ResumeContext): SpawnCommand {
-		const argv = [...PI_FORCED_ARGV, "--model", PI_DEFAULT_MODEL];
+		const argv = buildPiArgv(ctx.frontmatter);
 		const sessionId = readSessionId(ctx.priorRun.metadataJson);
 		if (sessionId) argv.push("--session", sessionId);
 		return {
@@ -215,6 +229,31 @@ export const piRuntime: AgentRuntime = {
 		});
 	},
 };
+
+/**
+ * Render pi's argv with optional per-run frontmatter overrides (burrow-b5b4).
+ * When `frontmatter.provider` is non-empty (after trim) it replaces the
+ * default `PI_DEFAULT_PROVIDER` slot in the locked prefix; when unset, the
+ * prefix stays bit-for-bit identical to `PI_FORCED_ARGV`. Same story for
+ * `--model`: a non-empty `frontmatter.model` substitutes for
+ * `PI_DEFAULT_MODEL`. `envPassthrough` is intentionally not adjusted here —
+ * projects opt non-anthropic provider keys in via `burrow.toml [env]`
+ * (mx-d46d5d). Exported for unit tests.
+ */
+export function buildPiArgv(frontmatter?: AgentFrontmatter): string[] {
+	const argv = [...PI_FORCED_ARGV];
+	const provider = nonEmpty(frontmatter?.provider);
+	if (provider) argv[argv.length - 1] = provider;
+	const model = nonEmpty(frontmatter?.model) ?? PI_DEFAULT_MODEL;
+	argv.push("--model", model);
+	return argv;
+}
+
+function nonEmpty(value: string | undefined): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
 
 /**
  * Encode the run's prompt followed by any pending steering messages as a
