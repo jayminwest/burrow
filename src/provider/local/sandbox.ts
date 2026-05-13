@@ -74,7 +74,7 @@ async function spawnDarwin(
 		stderr: "pipe",
 	});
 
-	await writeStringStdin(proc, command.stdin);
+	await writeStringStdin(proc, command.stdin, command.holdStdin ?? false);
 
 	let cleanedUp = false;
 	const cleanup = (): void => {
@@ -93,6 +93,7 @@ async function spawnDarwin(
 			proc.kill();
 			cleanup();
 		},
+		closeStdin: makeCloseStdin(proc),
 	};
 }
 
@@ -118,7 +119,7 @@ async function spawnLinux(
 		stderr: "pipe",
 	});
 
-	await writeStringStdin(proc, command.stdin);
+	await writeStringStdin(proc, command.stdin, command.holdStdin ?? false);
 
 	return {
 		pid: proc.pid,
@@ -126,15 +127,31 @@ async function spawnLinux(
 		stderr: proc.stderr as ReadableStream<Uint8Array>,
 		exited: proc.exited,
 		cancel: () => proc.kill(),
+		closeStdin: makeCloseStdin(proc),
 	};
 }
 
-async function writeStringStdin(proc: Bun.Subprocess, stdin: SpawnCommand["stdin"]): Promise<void> {
+async function writeStringStdin(
+	proc: Bun.Subprocess,
+	stdin: SpawnCommand["stdin"],
+	holdStdin: boolean,
+): Promise<void> {
 	if (typeof stdin !== "string") return;
 	const sink = proc.stdin;
 	if (!sink || typeof sink === "number") return;
 	sink.write(new TextEncoder().encode(stdin));
-	await sink.end();
+	if (!holdStdin) await sink.end();
+}
+
+function makeCloseStdin(proc: Bun.Subprocess): () => Promise<void> {
+	let closed = false;
+	return async () => {
+		if (closed) return;
+		closed = true;
+		const sink = proc.stdin;
+		if (!sink || typeof sink === "number") return;
+		await sink.end();
+	};
 }
 
 function resolveCwd(workspace: string, cwd: string | undefined): string {

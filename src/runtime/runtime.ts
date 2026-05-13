@@ -111,6 +111,21 @@ export interface AgentRuntime {
 	credentialPaths?(): Promise<string[]>;
 
 	/**
+	 * If defined, the dispatcher holds the child's stdin open after writing
+	 * the prompt and closes it only when this predicate returns true for a
+	 * persisted event (or when the process exits, as a fallback). Runtimes
+	 * whose CLI exits the instant stdin closes mid-inference (e.g. pi
+	 * v0.74.0 — mx-d9b3ad) MUST set this; runtimes that rely on stdin EOF
+	 * to flush their final output (e.g. claude-code `--print`) MUST NOT.
+	 *
+	 * The predicate is invoked once per parser-emitted event after the
+	 * event is persisted. The first event that returns true triggers
+	 * `SpawnResult.closeStdin()`; subsequent events are ignored on the
+	 * stdin-close path (the call is idempotent regardless).
+	 */
+	shouldCloseStdinOnEvent?(event: RuntimeEvent): boolean;
+
+	/**
 	 * Host env var names this runtime needs forwarded into the sandbox for its
 	 * CLI to authenticate or configure itself. `burrow up` unions every
 	 * effective agent's list with the project's `[env]`-derived passthrough

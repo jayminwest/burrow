@@ -49,12 +49,12 @@
  * resumes the same conversation.
  *
  * Critical dispatcher invariant (mx-d9b3ad, from the captured fixtures):
- * pi exits the instant stdin closes, even mid-inference. The current
- * dispatcher's "write prompt, close stdin" semantics will end pi before
- * any assistant content is produced. The runtime here exposes the correct
- * RPC line shape; wiring stdin-hold (close stdin only after
- * `agent_end` arrives on stdout) is a dispatcher-layer concern tracked
- * separately so e2e runs against real pi produce assistant content.
+ * pi exits the instant stdin closes, even mid-inference. The runtime
+ * declares `shouldCloseStdinOnEvent` returning true for `agent_end`, which
+ * tells the dispatcher to write the prompt + hold stdin open, then close
+ * it only after pi has emitted its terminal lifecycle envelope. Real e2e
+ * runs without this hook produce only response+agent_start+turn_start and
+ * exit 0 with no assistant content (burrow-5db3).
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -157,6 +157,20 @@ export const piRuntime: AgentRuntime = {
 
 	parseEvents(line: string, _ctx: ParseContext): RuntimeEvent[] {
 		return parsePiEvents(line);
+	},
+
+	/**
+	 * pi v0.74.0 exits the instant stdin closes (mx-d9b3ad), so the dispatcher
+	 * must hold stdin open until the run actually finishes. `agent_end` is
+	 * pi's terminal lifecycle envelope (collapsed by the parser to
+	 * `state_change` on `system` with the raw envelope preserved in
+	 * `payload`); closing stdin on that signal lets pi exit cleanly through
+	 * its RPC read loop instead of being killed mid-inference.
+	 */
+	shouldCloseStdinOnEvent(event: RuntimeEvent): boolean {
+		if (event.kind !== "state_change") return false;
+		const payload = event.payload as { type?: unknown } | null | undefined;
+		return !!payload && payload.type === "agent_end";
 	},
 
 	encodeInboxMessage(messages: Message[]): { stdin: string } {

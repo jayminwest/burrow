@@ -545,3 +545,240 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 		expect(resumeCmd?.argv[modelIdx + 1]).toBe(PI_DEFAULT_MODEL);
 	});
 });
+
+// stdin-hold contract for runtimes that exit on stdin EOF mid-inference
+// (burrow-5db3, mx-d9b3ad). The dispatcher must propagate `holdStdin` on the
+// spawn command and call `SpawnResult.closeStdin()` only after the runtime's
+// shouldCloseStdinOnEvent predicate matches a persisted event.
+describe("startRunDispatcher · stdin-hold contract (burrow-5db3)", () => {
+	let dataDir: string;
+	let workspaceDir: string;
+	let client: Client;
+
+	beforeEach(async () => {
+		dataDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-stdin-"));
+		workspaceDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-stdin-ws-"));
+		client = await Client.open({ dataDir, configDir: dataDir });
+	});
+
+	afterEach(async () => {
+		await client.close();
+		rmSync(dataDir, { recursive: true, force: true });
+		rmSync(workspaceDir, { recursive: true, force: true });
+	});
+
+	interface StdinSpawnCapture {
+		holdStdin?: boolean;
+		closeStdinCalls: number;
+		closeStdinCalledBeforeExit: boolean;
+	}
+
+	// Spawn fake that withholds process exit until `closeStdin` is invoked.
+	// Mirrors pi v0.74.0's "stdin EOF → process exit" semantics so the
+	// dispatcher's close-on-trigger path is exercised end-to-end against
+	// scripted stdout.
+	function holdingSpawn(stdoutLines: string[], capture: StdinSpawnCapture): SpawnFn {
+		return async (_profile, command) => {
+			capture.holdStdin = command.holdStdin;
+			const encoder = new TextEncoder();
+			const blob = stdoutLines.map((l) => `${l}\n`).join("");
+			const stdout = new ReadableStream<Uint8Array>({
+				start(controller) {
+					if (blob.length > 0) controller.enqueue(encoder.encode(blob));
+					controller.close();
+				},
+			});
+			const stderr = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.close();
+				},
+			});
+			let resolveExit!: (n: number) => void;
+			const exited = new Promise<number>((r) => {
+				resolveExit = r;
+			});
+			let exited_ = false;
+			const closeStdin = async (): Promise<void> => {
+				capture.closeStdinCalls += 1;
+				if (capture.closeStdinCalls === 1) {
+					capture.closeStdinCalledBeforeExit = !exited_;
+				}
+				exited_ = true;
+				resolveExit(0);
+			};
+			return {
+				pid: 4242,
+				stdout,
+				stderr,
+				exited,
+				cancel: () => {
+					exited_ = true;
+					resolveExit(130);
+				},
+				closeStdin,
+			};
+		};
+	}
+
+	test("piRuntime: holdStdin propagates to spawn and stdin closes on agent_end", async () => {
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+
+		// Minimal pi trace: ack + lifecycle envelopes through agent_end.
+		// The trigger predicate fires on agent_end and only then does the
+		// fake spawn resolve the process exit. If holdStdin weren't wired,
+		// the fake would hang forever (closeStdin never invoked → exit
+		// promise never resolves → test times out).
+		const trace = [
+			JSON.stringify({ type: "response", command: "prompt", success: true }),
+			JSON.stringify({ type: "agent_start" }),
+			JSON.stringify({ type: "turn_start" }),
+			JSON.stringify({ type: "agent_end" }),
+		];
+		const capture: StdinSpawnCapture = {
+			closeStdinCalls: 0,
+			closeStdinCalledBeforeExit: false,
+		};
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: holdingSpawn(trace, capture),
+			installCheck: async () => ({ installed: true, version: "0.74.0", path: "/usr/local/bin/pi" }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "Reply with: ack.",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded", 2000);
+		await dispatcher.stop();
+
+		expect(capture.holdStdin).toBe(true);
+		expect(capture.closeStdinCalls).toBe(1);
+		expect(capture.closeStdinCalledBeforeExit).toBe(true);
+	});
+
+	test("non-holdStdin runtime: holdStdin not set; closeStdin never called", async () => {
+		const burrow = seedActiveBurrow(client);
+		// fakeRuntime declares no shouldCloseStdinOnEvent — the dispatcher
+		// must leave the existing write-and-close-at-spawn semantics in
+		// place (i.e. no holdStdin flag, no closeStdin invocation).
+		client.agents.register(fakeRuntime());
+		const capture: StdinSpawnCapture = {
+			closeStdinCalls: 0,
+			closeStdinCalledBeforeExit: false,
+		};
+
+		// Non-holding spawn: resolves exit immediately so consumeStdout
+		// finishes naturally. closeStdin is exposed but should never be
+		// invoked by the dispatcher when the runtime doesn't opt in.
+		const spawnFn: SpawnFn = async (_profile, command) => {
+			capture.holdStdin = command.holdStdin;
+			const encoder = new TextEncoder();
+			const stdout = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.enqueue(encoder.encode("hello\n"));
+					c.close();
+				},
+			});
+			const stderr = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.close();
+				},
+			});
+			let resolveExit!: (n: number) => void;
+			const exited = new Promise<number>((r) => {
+				resolveExit = r;
+			});
+			queueMicrotask(() => resolveExit(0));
+			return {
+				pid: 4243,
+				stdout,
+				stderr,
+				exited,
+				cancel: () => resolveExit(130),
+				closeStdin: async () => {
+					capture.closeStdinCalls += 1;
+				},
+			};
+		};
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: spawnFn,
+		});
+		dispatcher.start();
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "fake", prompt: "p" });
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		expect(capture.holdStdin).toBeUndefined();
+		expect(capture.closeStdinCalls).toBe(0);
+	});
+
+	test("holdStdin runtime without trigger event: stdin closed defensively in finally", async () => {
+		const burrow = seedActiveBurrow(client);
+		// Runtime opts into stdin-hold but the predicate never matches the
+		// scripted stdout. The dispatcher must still close stdin in its
+		// finally block once the child exits — otherwise the parent leaks
+		// an orphaned write FD on every "agent died without emitting its
+		// terminal envelope" run.
+		const runtime = fakeRuntime({
+			id: "holdy",
+			shouldCloseStdinOnEvent: () => false,
+		});
+		client.agents.register(runtime);
+		const capture: StdinSpawnCapture = {
+			closeStdinCalls: 0,
+			closeStdinCalledBeforeExit: false,
+		};
+
+		const spawnFn: SpawnFn = async (_profile, command) => {
+			capture.holdStdin = command.holdStdin;
+			const encoder = new TextEncoder();
+			const stdout = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.enqueue(encoder.encode("line\n"));
+					c.close();
+				},
+			});
+			const stderr = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.close();
+				},
+			});
+			let resolveExit!: (n: number) => void;
+			const exited = new Promise<number>((r) => {
+				resolveExit = r;
+			});
+			// Child exits independently of stdin lifecycle here — the
+			// agent crashed / completed without emitting its stdin-close
+			// trigger. Dispatcher must still drop the dangling FD.
+			queueMicrotask(() => resolveExit(0));
+			return {
+				pid: 4244,
+				stdout,
+				stderr,
+				exited,
+				cancel: () => resolveExit(130),
+				closeStdin: async () => {
+					capture.closeStdinCalls += 1;
+				},
+			};
+		};
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: spawnFn,
+		});
+		dispatcher.start();
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "holdy", prompt: "p" });
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		expect(capture.holdStdin).toBe(true);
+		expect(capture.closeStdinCalls).toBe(1);
+	});
+});

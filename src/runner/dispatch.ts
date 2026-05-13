@@ -123,9 +123,11 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 	const spawn = input.spawn ?? runSandboxed;
 	const startProxyFn = input.startProxy ?? startProxy;
 
+	const useStdinHold = runtime.shouldCloseStdinOnEvent !== undefined;
+
 	let proxy: ProxyHandle | null = null;
 	let runProfile: SandboxProfile = profile;
-	let runCommand: SpawnCommand = command;
+	let runCommand: SpawnCommand = useStdinHold ? { ...command, holdStdin: true } : command;
 	if (profile.network === "restricted") {
 		try {
 			proxy = await startProxyFn({ allowedDomains: profile.allowedDomains });
@@ -184,11 +186,26 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		}
 	};
 
+	let stdinClosed = false;
+	const closeStdinIfNeeded = async (events: RuntimeEvent[]): Promise<void> => {
+		if (stdinClosed || !useStdinHold || !proc.closeStdin) return;
+		const trigger = runtime.shouldCloseStdinOnEvent;
+		if (!trigger) return;
+		for (const ev of events) {
+			if (trigger(ev)) {
+				stdinClosed = true;
+				await proc.closeStdin();
+				return;
+			}
+		}
+	};
+
 	const consumeStdout = async (): Promise<void> => {
 		for await (const line of readLines(proc.stdout)) {
 			if (line.length === 0) continue;
 			const events = runtime.parseEvents(line, { burrow, run });
 			persistEvents(events);
+			await closeStdinIfNeeded(events);
 		}
 	};
 
@@ -216,6 +233,14 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		// Bound proxy teardown to spawn lifetime — a hung CONNECT tunnel
 		// can't pin the run.
 		await proxy?.stop();
+		// Defensive: if the child exited before the runtime emitted its
+		// stdin-close trigger event, drop the dangling write side so the
+		// host process doesn't keep an orphaned pipe FD. closeStdin is
+		// idempotent (mx-d9b3ad).
+		if (useStdinHold && !stdinClosed && proc.closeStdin) {
+			stdinClosed = true;
+			await proc.closeStdin().catch(() => {});
+		}
 	}
 
 	if (cancelled) {

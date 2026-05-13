@@ -13,6 +13,7 @@ import {
 	piRuntime,
 	readNewestPiSessionId,
 } from "./pi.ts";
+import type { RuntimeEvent } from "./runtime.ts";
 
 function fakeBurrow(): BurrowRow {
 	return {
@@ -453,5 +454,43 @@ describe("piRuntime.parseEvents", () => {
 		expect(events).toHaveLength(1);
 		expect(events[0]?.kind).toBe("state_change");
 		expect(events[0]?.stream).toBe("system");
+	});
+});
+
+describe("piRuntime.shouldCloseStdinOnEvent (burrow-5db3)", () => {
+	// pi v0.74.0 exits the instant stdin closes (mx-d9b3ad), so the
+	// dispatcher must withhold stdin EOF until pi's terminal lifecycle
+	// envelope arrives. The predicate below is what the dispatcher polls
+	// per persisted event.
+	test("returns true for agent_end state_change envelopes", () => {
+		const ev = piRuntime.parseEvents(JSON.stringify({ type: "agent_end" }), {
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+		})[0];
+		if (!ev) throw new Error("expected one event from agent_end envelope");
+		expect(piRuntime.shouldCloseStdinOnEvent?.(ev)).toBe(true);
+	});
+
+	test("returns false for non-terminal lifecycle envelopes", () => {
+		const samples = [
+			JSON.stringify({ type: "response", command: "prompt", success: true }),
+			JSON.stringify({ type: "agent_start" }),
+			JSON.stringify({ type: "turn_start" }),
+			JSON.stringify({ type: "turn_end" }),
+			JSON.stringify({ type: "tool_execution_start" }),
+			JSON.stringify({ type: "tool_execution_end" }),
+		];
+		for (const line of samples) {
+			const ev = piRuntime.parseEvents(line, { burrow: fakeBurrow(), run: fakeRun() })[0];
+			if (!ev) throw new Error(`expected one event from ${line}`);
+			expect(piRuntime.shouldCloseStdinOnEvent?.(ev)).toBe(false);
+		}
+	});
+
+	test("returns false for assistant content events (text / thinking / tool_use)", () => {
+		// agent_end mapping is intentionally narrow — closing stdin on an
+		// intermediate message_end would truncate pi mid-turn.
+		const ev: RuntimeEvent = { kind: "text", stream: "stdout", payload: { text: "ack" } };
+		expect(piRuntime.shouldCloseStdinOnEvent?.(ev)).toBe(false);
 	});
 });

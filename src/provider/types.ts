@@ -74,6 +74,17 @@ export interface SpawnCommand {
 	env?: Record<string, string>;
 	stdin?: ReadableStream<Uint8Array> | string;
 	timeoutMs?: number;
+	/**
+	 * When true, the sandbox writes `stdin` (if a string) but does NOT close
+	 * the write side. The caller drains stdout, then invokes
+	 * `SpawnResult.closeStdin()` once it has observed whatever signal
+	 * indicates the child is done consuming input (e.g. pi's `agent_end`
+	 * event — mx-d9b3ad). Runtimes whose CLI exits the instant stdin closes
+	 * mid-inference must set this; runtimes that rely on stdin EOF to flush
+	 * their final output (e.g. claude-code `--print`) must not. Default
+	 * false (current behavior — write+end at spawn time).
+	 */
+	holdStdin?: boolean;
 }
 
 export interface SpawnResult {
@@ -84,4 +95,10 @@ export interface SpawnResult {
 	exited: Promise<number>;
 	/** Kill the child and clean up sandbox-side temp state. Idempotent. */
 	cancel(): void;
+	/**
+	 * Idempotent. Closes the child's stdin write side. Only meaningful when
+	 * the command was sent with `holdStdin: true` — otherwise stdin was
+	 * already ended at spawn time and this call is a no-op.
+	 */
+	closeStdin?: () => Promise<void>;
 }
