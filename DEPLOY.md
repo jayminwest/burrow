@@ -205,6 +205,17 @@ burrow.example.com {
 
 Bearer auth via `BURROW_API_TOKEN` is the only auth gate; it's a single token, no rotation, no per-user scope (see [SPEC §27](SPEC.md#27-http-api-burrow-serve) for the security posture). Multi-user is an explicit non-goal — if you need it, run a control plane like [warren](../warren/SPEC.md) in front of burrow.
 
+## Cross-process dispatch contract
+
+`burrow serve` is a single-process, stateful-per-host worker: the HTTP listener and the run dispatcher live in the same Bun process, sharing the per-host SQLite DB (`$BURROW_DATA_DIR/db.sqlite`, WAL mode). When a remote client (warren, an HTTP gateway, `curl`) POSTs `/burrows/:id/runs`, the dispatcher inside that same process picks the row up off the create-time hook and drives it to a terminal state — `succeeded`, `failed`, or `cancelled` — without any further intervention from the caller. This is what makes burrow viable as the unit of cross-host fan-out: a control plane only has to know how to talk HTTP and observe the run row over `/runs/:id` (or `/runs/:id/stream`); the executor lives with the workspace.
+
+Two operational implications:
+
+- **Don't run two `burrow serve` processes against the same `BURROW_DATA_DIR`.** The dispatcher's startup sweep flips orphaned `running` rows from a previous process to `failed`; a second concurrent process would race the same sweep and risk double-claim. One worker per data dir.
+- **Crash recovery is local.** If a worker dies mid-run, the next start sweeps in-flight rows to `failed` (with `errorMessage` recording the orphaned state). A control plane that wants at-least-once execution has to retry by enqueuing a fresh run, not by resurrecting the failed row.
+
+The locked test for this contract is `src/server/dispatcher-cross-process.test.ts` — it spawns `burrow serve` as a real OS subprocess, POSTs a run over TCP, and asserts the row reaches `succeeded` without any in-process help. Cross-host warren topologies depend on this behaviour.
+
 ## Decision record
 
 This document supersedes the deploy-posture sections of [SPEC.md §8](SPEC.md#8-sandbox-isolation) and resolves [ROADMAP.md R-01](ROADMAP.md#r-01--prefer-burrow-on-host-over-burrow-in-pod-userns-nesting). The empirical work was done in `burrow-0fab` (the macOS-vs-Linux design discussion); the standalone decision was `burrow-7ba7`; this guide is the executable form.
