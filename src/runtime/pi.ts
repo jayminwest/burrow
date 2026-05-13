@@ -207,7 +207,7 @@ export const piRuntime: AgentRuntime = {
 	},
 
 	encodeInboxMessage(messages: Message[]): { stdin: string } {
-		return { stdin: messages.map(piPromptCommandFromMessage).join("\n") };
+		return { stdin: messages.map((m) => `${piPromptCommandFromMessage(m)}\n`).join("") };
 	},
 
 	/**
@@ -280,7 +280,7 @@ export function encodePiStdin(prompt: string, messages: Message[]): string {
 	const lines: string[] = [];
 	if (prompt.length > 0) lines.push(piPromptCommand(prompt));
 	for (const m of messages) lines.push(piPromptCommandFromMessage(m));
-	return lines.join("\n");
+	return lines.map((l) => `${l}\n`).join("");
 }
 
 function piPromptCommand(text: string): string {

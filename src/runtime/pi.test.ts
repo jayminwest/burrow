@@ -144,7 +144,8 @@ describe("piRuntime.buildSpawnCommand", () => {
 			workspacePath: "/ws",
 		});
 		expect(typeof cmd.stdin).toBe("string");
-		const lines = (cmd.stdin as string).split("\n");
+		expect((cmd.stdin as string).endsWith("\n")).toBe(true);
+		const lines = (cmd.stdin as string).split("\n").slice(0, -1);
 		expect(lines).toHaveLength(1);
 		expect(JSON.parse(lines[0] ?? "")).toEqual({
 			type: "prompt",
@@ -161,7 +162,8 @@ describe("piRuntime.buildSpawnCommand", () => {
 			envResolved: {},
 			workspacePath: "/ws",
 		});
-		const lines = (cmd.stdin as string).split("\n");
+		expect((cmd.stdin as string).endsWith("\n")).toBe(true);
+		const lines = (cmd.stdin as string).split("\n").slice(0, -1);
 		expect(lines).toHaveLength(2);
 		const first = JSON.parse(lines[0] ?? "") as { message: string };
 		const second = JSON.parse(lines[1] ?? "") as { message: string };
@@ -330,7 +332,8 @@ describe("buildPiArgv", () => {
 describe("encodePiStdin", () => {
 	test("omits the prompt line when the prompt is empty (steering-only nudge)", () => {
 		const blob = encodePiStdin("", [fakeMessage()]);
-		const lines = blob.split("\n");
+		expect(blob.endsWith("\n")).toBe(true);
+		const lines = blob.split("\n").slice(0, -1);
 		expect(lines).toHaveLength(1);
 		const parsed = JSON.parse(lines[0] ?? "") as { type: string; message: string };
 		expect(parsed.type).toBe("prompt");
@@ -346,7 +349,8 @@ describe("encodePiStdin", () => {
 			fakeMessage({ id: "msg_a", body: "first", priority: "urgent" }),
 			fakeMessage({ id: "msg_b", body: "second", priority: "low" }),
 		]);
-		const lines = blob.split("\n");
+		expect(blob.endsWith("\n")).toBe(true);
+		const lines = blob.split("\n").slice(0, -1);
 		expect(lines).toHaveLength(2);
 		const parsed = lines.map((l) => JSON.parse(l) as { type: string; message: string });
 		expect(parsed[0]?.type).toBe("prompt");
@@ -354,6 +358,27 @@ describe("encodePiStdin", () => {
 		expect(parsed[0]?.message).toContain("first");
 		expect(parsed[1]?.message).toContain("priority: low");
 		expect(parsed[1]?.message).toContain("second");
+	});
+
+	test("single-prompt case terminates with a newline (burrow-faf5)", () => {
+		// pi's RPC mode is line-delimited — without a trailing \n it sits on
+		// an incomplete JSON line and never processes the prompt.
+		const blob = encodePiStdin("hello", []);
+		expect(blob.endsWith("\n")).toBe(true);
+		const lines = blob.split("\n").slice(0, -1);
+		expect(lines).toHaveLength(1);
+		const parsed = JSON.parse(lines[0] ?? "") as { type: string; message: string };
+		expect(parsed.type).toBe("prompt");
+		expect(parsed.message).toBe("hello");
+	});
+
+	test("prompt + steering messages all terminate with newlines", () => {
+		const blob = encodePiStdin("primary", [
+			fakeMessage({ id: "msg_a", body: "first", priority: "urgent" }),
+		]);
+		expect(blob.endsWith("\n")).toBe(true);
+		const lines = blob.split("\n").slice(0, -1);
+		expect(lines).toHaveLength(2);
 	});
 });
 
@@ -378,7 +403,8 @@ describe("piRuntime.encodeInboxMessage", () => {
 			fakeMessage({ id: "msg_a", body: "first", priority: "urgent" }),
 			fakeMessage({ id: "msg_b", body: "second", priority: "low" }),
 		]);
-		const lines = out?.stdin.split("\n") ?? [];
+		expect(out?.stdin.endsWith("\n")).toBe(true);
+		const lines = out?.stdin.split("\n").slice(0, -1) ?? [];
 		expect(lines).toHaveLength(2);
 		const parsed = lines.map((l) => JSON.parse(l) as { type: string; message: string });
 		expect(parsed[0]?.type).toBe("prompt");
@@ -440,7 +466,8 @@ describe("piRuntime.buildResumeCommand", () => {
 			envResolved: {},
 			workspacePath: "/ws",
 		});
-		const lines = (cmd?.stdin as string).split("\n");
+		expect((cmd?.stdin as string).endsWith("\n")).toBe(true);
+		const lines = (cmd?.stdin as string).split("\n").slice(0, -1);
 		expect(lines).toHaveLength(2);
 		expect(JSON.parse(lines[0] ?? "")).toEqual({ type: "prompt", message: "continue" });
 		expect(lines[1]).toContain("[STEERING]");
@@ -627,10 +654,12 @@ describe("piRuntime.encodeSteeringMessage (burrow-250d)", () => {
 
 	test("priority prefix matches the at-spawn encoder (parity with encodeInboxMessage)", () => {
 		const msg = fakeMessage({ id: "msg_p", body: "urgent thing", priority: "urgent" });
-		const midRun = piRuntime.encodeSteeringMessage?.(msg)?.stdin.trimEnd();
+		const midRun = piRuntime.encodeSteeringMessage?.(msg)?.stdin;
 		const atSpawn = piRuntime.encodeInboxMessage?.([msg])?.stdin;
 		// Same wire shape regardless of whether the message landed in
-		// pendingMessages (atSpawn) or arrived mid-run (midRun).
+		// pendingMessages (atSpawn) or arrived mid-run (midRun) — both
+		// terminate the JSON envelope with \n so pi's line-delimited RPC
+		// loop processes it (burrow-faf5).
 		expect(midRun).toBe(atSpawn);
 	});
 });
