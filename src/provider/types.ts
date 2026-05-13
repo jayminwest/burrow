@@ -101,4 +101,14 @@ export interface SpawnResult {
 	 * already ended at spawn time and this call is a no-op.
 	 */
 	closeStdin?: () => Promise<void>;
+	/**
+	 * Write more bytes to the child's stdin without closing the sink. Only
+	 * meaningful when the command was sent with `holdStdin: true` —
+	 * otherwise stdin was already ended at spawn time and calls reject.
+	 * Used by the dispatcher's mid-run steering loop (SPEC §13.5) to
+	 * deliver inbox messages to runtimes that opt in via
+	 * `AgentRuntime.encodeSteeringMessage` (e.g. pi's stdin-RPC). Rejects
+	 * if the child has already closed stdin / exited.
+	 */
+	writeStdin?: (chunk: string) => Promise<void>;
 }

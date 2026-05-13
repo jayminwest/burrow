@@ -55,6 +55,14 @@
  * it only after pi has emitted its terminal lifecycle envelope. Real e2e
  * runs without this hook produce only response+agent_start+turn_start and
  * exit 0 with no assistant content (burrow-5db3).
+ *
+ * Mid-run steering (SPEC §13.5, burrow-250d): because stdin is held open
+ * until `agent_end`, the dispatcher can route inbox messages arriving
+ * during an in-flight turn directly to pi by writing additional
+ * `{"type":"prompt",...}` lines through `SpawnResult.writeStdin`. The
+ * runtime exposes that encoding via `encodeSteeringMessage` so other
+ * runtimes that grow a stdin-held path can adopt the same seam without
+ * pi-specific dispatcher code.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -175,6 +183,21 @@ export const piRuntime: AgentRuntime = {
 
 	encodeInboxMessage(messages: Message[]): { stdin: string } {
 		return { stdin: messages.map(piPromptCommandFromMessage).join("\n") };
+	},
+
+	/**
+	 * Mid-run steering (SPEC §13.5, burrow-250d). Pi's `--mode rpc` reads
+	 * one JSON command per `\n`-delimited line from stdin, so an in-flight
+	 * agent can be steered by writing additional `{"type":"prompt",...}`
+	 * envelopes to the still-open sink (the stdin-hold path established by
+	 * burrow-5db3 keeps the FD live until `agent_end`). Pi's RPC vocabulary
+	 * pinned to `prompt` here for the same reason `encodeInboxMessage` uses
+	 * it — that's the only command shape proven against the captured
+	 * fixtures; if a later pi version exposes a dedicated `steer` /
+	 * `follow_up` command this is the one place to bump.
+	 */
+	encodeSteeringMessage(message: Message): { stdin: string } {
+		return { stdin: `${piPromptCommandFromMessage(message)}\n` };
 	},
 
 	async prepareWorkspace(ctx: PrepareContext): Promise<void> {

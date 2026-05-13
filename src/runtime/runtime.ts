@@ -126,6 +126,27 @@ export interface AgentRuntime {
 	shouldCloseStdinOnEvent?(event: RuntimeEvent): boolean;
 
 	/**
+	 * Mid-run steering encoder (SPEC §13.5). Called by the dispatcher when
+	 * an inbox message arrives while the agent is still running so the
+	 * message can be delivered without waiting for the next spawn. The
+	 * returned `stdin` string is written verbatim to the child's stdin
+	 * via `SpawnResult.writeStdin`; runtimes own their own line
+	 * termination (e.g. trailing `\n` for NDJSON-RPC).
+	 *
+	 * Only effective when the runtime also declares
+	 * `shouldCloseStdinOnEvent` (so the dispatcher actually holds stdin
+	 * open) and the spawn result exposes `writeStdin`. Runtimes that
+	 * close stdin at spawn time (claude-code `--print`, sapling
+	 * `--prompt`) leave this unset — their pending messages continue to
+	 * flow through `pendingMessages` at the *next* spawn (SPEC §13.2).
+	 *
+	 * Returning `undefined` declines mid-stream delivery for this message
+	 * (e.g. shape doesn't match an open turn); the message stays `unread`
+	 * and the next tick / next spawn picks it up.
+	 */
+	encodeSteeringMessage?(message: Message): { stdin: string } | undefined;
+
+	/**
 	 * Host env var names this runtime needs forwarded into the sandbox for its
 	 * CLI to authenticate or configure itself. `burrow up` unions every
 	 * effective agent's list with the project's `[env]`-derived passthrough

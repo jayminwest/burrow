@@ -94,6 +94,7 @@ async function spawnDarwin(
 			cleanup();
 		},
 		closeStdin: makeCloseStdin(proc),
+		writeStdin: makeWriteStdin(proc),
 	};
 }
 
@@ -128,6 +129,7 @@ async function spawnLinux(
 		exited: proc.exited,
 		cancel: () => proc.kill(),
 		closeStdin: makeCloseStdin(proc),
+		writeStdin: makeWriteStdin(proc),
 	};
 }
 
@@ -151,6 +153,22 @@ function makeCloseStdin(proc: Bun.Subprocess): () => Promise<void> {
 		const sink = proc.stdin;
 		if (!sink || typeof sink === "number") return;
 		await sink.end();
+	};
+}
+
+function makeWriteStdin(proc: Bun.Subprocess): (chunk: string) => Promise<void> {
+	const encoder = new TextEncoder();
+	return async (chunk: string) => {
+		const sink = proc.stdin;
+		if (!sink || typeof sink === "number") {
+			throw new Error("sandbox: child stdin is not writable");
+		}
+		sink.write(encoder.encode(chunk));
+		// `flush()` returns a promise that resolves when the kernel buffer
+		// has drained — guarantees the bytes reach the child before this
+		// helper returns so callers can sequence subsequent writes against
+		// observed output.
+		await sink.flush();
 	};
 }
 

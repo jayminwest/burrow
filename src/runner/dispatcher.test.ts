@@ -782,3 +782,247 @@ describe("startRunDispatcher · stdin-hold contract (burrow-5db3)", () => {
 		expect(capture.closeStdinCalls).toBe(1);
 	});
 });
+
+// Mid-run steering (burrow-250d, SPEC §13.5): when a runtime opts into
+// stdin-hold AND defines encodeSteeringMessage, the dispatcher polls the
+// messages table while the run is in flight, writes newly-arrived rows
+// through SpawnResult.writeStdin, and marks them delivered against the
+// active run. Runtimes without encodeSteeringMessage stay on the
+// next-spawn delivery path even when they hold stdin.
+describe("startRunDispatcher · mid-run steering (burrow-250d)", () => {
+	let dataDir: string;
+	let workspaceDir: string;
+	let client: Client;
+
+	beforeEach(async () => {
+		dataDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-midrun-"));
+		workspaceDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-midrun-ws-"));
+		await mkdir(join(workspaceDir, PI_SESSION_DIR), { recursive: true });
+		client = await Client.open({ dataDir, configDir: dataDir });
+	});
+
+	afterEach(async () => {
+		await client.close();
+		rmSync(dataDir, { recursive: true, force: true });
+		rmSync(workspaceDir, { recursive: true, force: true });
+	});
+
+	interface MidRunCapture {
+		writes: string[];
+		closeStdinCalls: number;
+		writeStdinCalled: boolean;
+	}
+
+	// Spawn fake that emits a "running" stdout marker, then idles until
+	// the test pushes an inbox message and writeStdin is observed; on
+	// the next tick after we record the write, it emits agent_end so
+	// the dispatcher's trigger predicate fires and the run finalizes.
+	function midRunSpawn(capture: MidRunCapture): SpawnFn {
+		return async (_profile, command) => {
+			const encoder = new TextEncoder();
+			// Two-stage stdout: initial marker, then agent_end after the
+			// test has dropped a message into stdin.
+			let pushAgentEnd: (() => void) | null = null;
+			const stdout = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(
+						encoder.encode(
+							`${JSON.stringify({ type: "response", command: "prompt", success: true })}\n`,
+						),
+					);
+					controller.enqueue(encoder.encode(`${JSON.stringify({ type: "turn_start" })}\n`));
+					pushAgentEnd = () => {
+						controller.enqueue(encoder.encode(`${JSON.stringify({ type: "agent_end" })}\n`));
+						controller.close();
+					};
+				},
+			});
+			const stderr = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.close();
+				},
+			});
+			let resolveExit!: (n: number) => void;
+			const exited = new Promise<number>((r) => {
+				resolveExit = r;
+			});
+			void command; // command is unused — we only assert writes through writeStdin
+
+			return {
+				pid: 5555,
+				stdout,
+				stderr,
+				exited,
+				cancel: () => resolveExit(130),
+				closeStdin: async () => {
+					capture.closeStdinCalls += 1;
+					resolveExit(0);
+				},
+				writeStdin: async (chunk: string) => {
+					capture.writeStdinCalled = true;
+					capture.writes.push(chunk);
+					// Once we've observed the mid-run write, push agent_end
+					// on the next microtask so the dispatcher's trigger
+					// predicate fires and the run finalizes.
+					queueMicrotask(() => pushAgentEnd?.());
+				},
+			};
+		};
+	}
+
+	test("inbox.send during a held-stdin pi run reaches the agent via writeStdin and emits inbox_delivered", async () => {
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+
+		const capture: MidRunCapture = {
+			writes: [],
+			closeStdinCalls: 0,
+			writeStdinCalled: false,
+		};
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: midRunSpawn(capture),
+			installCheck: async () => ({ installed: true, version: "0.74.0", path: "/usr/local/bin/pi" }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "Reply with: ack.",
+		});
+
+		// Wait for the run to actually start so the held-stdin spawn has
+		// been constructed and the mid-run poll loop is alive.
+		await waitFor(() => client.runs.get(run.id).state === "running", 2000);
+
+		// Send a steering message mid-run. The dispatcher's poll loop
+		// should pick it up within ~200 ms, encode it via
+		// piRuntime.encodeSteeringMessage, and write the bytes to the
+		// fake spawn's writeStdin sink.
+		const message = client.inbox.send({
+			burrowId: burrow.id,
+			body: "switch to writing tests",
+			priority: "high",
+		});
+
+		await waitFor(() => capture.writeStdinCalled, 2000);
+		await waitFor(() => client.runs.get(run.id).state === "succeeded", 2000);
+		await dispatcher.stop();
+
+		// Wire shape: a single pi RPC prompt envelope with the [STEERING]
+		// tag, terminated by \n so pi's NDJSON read loop frames it.
+		expect(capture.writes).toHaveLength(1);
+		const chunk = capture.writes[0] ?? "";
+		expect(chunk.endsWith("\n")).toBe(true);
+		const parsed = JSON.parse(chunk.trimEnd()) as { type: string; message: string };
+		expect(parsed.type).toBe("prompt");
+		expect(parsed.message).toContain("[STEERING]");
+		expect(parsed.message).toContain("priority: high");
+		expect(parsed.message).toContain("switch to writing tests");
+
+		// Row is marked delivered against THIS run, not the next one.
+		const stored = client.repos.messages.require(message.id);
+		expect(stored.state).toBe("delivered");
+		expect(stored.deliveredAtRunId).toBe(run.id);
+
+		// inbox_delivered system event was appended with mid_run mode.
+		const events = client.repos.events.listByBurrow(burrow.id, { limit: 100 });
+		const delivered = events.find((e) => e.kind === "inbox_delivered");
+		expect(delivered).toBeDefined();
+		expect(delivered?.stream).toBe("system");
+		const payload = delivered?.payloadJson as {
+			messageId: string;
+			priority: string;
+			mode: string;
+		};
+		expect(payload.messageId).toBe(message.id);
+		expect(payload.priority).toBe("high");
+		expect(payload.mode).toBe("mid_run");
+	});
+
+	test("runtime without encodeSteeringMessage skips mid-run delivery (messages stay unread)", async () => {
+		const burrow = seedActiveBurrow(client);
+		// Mirror pi's stdin-hold posture (so the dispatcher would *try*
+		// mid-run) but omit encodeSteeringMessage — messages must remain
+		// unread; writeStdin must not be called.
+		const heldRuntime = fakeRuntime({
+			id: "held-no-encoder",
+			shouldCloseStdinOnEvent: (ev) => ev.kind === "text",
+		});
+		client.agents.register(heldRuntime);
+
+		const capture: MidRunCapture = {
+			writes: [],
+			closeStdinCalls: 0,
+			writeStdinCalled: false,
+		};
+		// Spawn emits a single "text" line so the trigger predicate fires
+		// and the run finalizes — but we also need the loop alive long
+		// enough for a poll tick to happen if it were going to.
+		const spawnFn: SpawnFn = async () => {
+			const encoder = new TextEncoder();
+			let resolveExit!: (n: number) => void;
+			const exited = new Promise<number>((r) => {
+				resolveExit = r;
+			});
+			let triggerClose: (() => void) | null = null;
+			const stdout = new ReadableStream<Uint8Array>({
+				start(c) {
+					triggerClose = () => {
+						c.enqueue(encoder.encode("trigger\n"));
+						c.close();
+					};
+				},
+			});
+			const stderr = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.close();
+				},
+			});
+			// Stay alive ~300 ms so the dispatcher's 200 ms poll tick would
+			// have fired if the runtime opted in.
+			setTimeout(() => triggerClose?.(), 300);
+			return {
+				pid: 5556,
+				stdout,
+				stderr,
+				exited,
+				cancel: () => resolveExit(130),
+				closeStdin: async () => {
+					capture.closeStdinCalls += 1;
+					resolveExit(0);
+				},
+				writeStdin: async (chunk: string) => {
+					capture.writeStdinCalled = true;
+					capture.writes.push(chunk);
+				},
+			};
+		};
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: spawnFn,
+		});
+		dispatcher.start();
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "held-no-encoder",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "running", 2000);
+
+		const message = client.inbox.send({
+			burrowId: burrow.id,
+			body: "should not be delivered mid-run",
+		});
+
+		await waitFor(() => client.runs.get(run.id).state === "succeeded", 2000);
+		await dispatcher.stop();
+
+		expect(capture.writeStdinCalled).toBe(false);
+		// Row never reached the agent during this run.
+		const stored = client.repos.messages.require(message.id);
+		expect(stored.state).toBe("unread");
+	});
+});

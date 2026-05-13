@@ -22,8 +22,10 @@
  * doesn't have to reimplement it.
  */
 
-import type { Run, RunEvent } from "../core/types.ts";
+import type { Burrow, Run, RunEvent } from "../core/types.ts";
+import type { Repos } from "../db/repos/index.ts";
 import { appendAndPublish } from "../events/publish.ts";
+import type { EventBus } from "../events/tail.ts";
 import type { Client } from "../lib/client.ts";
 import { runSandboxed } from "../provider/local/sandbox.ts";
 import type { SandboxProfile, SpawnCommand, SpawnResult } from "../provider/types.ts";
@@ -31,6 +33,13 @@ import { type ProxyHandle, type StartProxyOptions, startProxy } from "../proxy/s
 import { composeCodexPrompt, writeCodexPromptFile } from "../runtime/codex.ts";
 import type { AgentRuntime, InstallCheckResult, RuntimeEvent } from "../runtime/runtime.ts";
 import type { RunOutcome } from "./run-loop.ts";
+
+/**
+ * How often the mid-run steering loop polls the messages table for newly
+ * arrived inbox rows. Bounded by SQLite latency, not a network hop, so a
+ * short interval is cheap; tunable mostly for tests.
+ */
+const MID_RUN_INBOX_POLL_MS = 200;
 
 export type SpawnFn = (profile: SandboxProfile, command: SpawnCommand) => Promise<SpawnResult>;
 export type StartProxyFn = (opts: StartProxyOptions) => Promise<ProxyHandle>;
@@ -58,6 +67,8 @@ export interface DispatchRunInput {
 	startProxy?: StartProxyFn;
 	/** Test seam: skip the runtime's installCheck. */
 	installCheck?: (rt: AgentRuntime) => Promise<InstallCheckResult>;
+	/** Test seam: override the mid-run inbox poll cadence (ms). */
+	midRunInboxPollMs?: number;
 }
 
 export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> {
@@ -187,6 +198,41 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 	};
 
 	let stdinClosed = false;
+
+	// Mid-run steering (SPEC §13.5, burrow-250d). Only runtimes that
+	// hold stdin open *and* encode per-message stdin payloads can have
+	// inbox messages delivered without waiting for the next spawn. The
+	// loop below polls the messages table on a short tick, writes any
+	// newly-arrived rows to the still-open stdin via the runtime's
+	// encoder, and marks them delivered against this run. Failures
+	// (writeStdin rejects, encoder returns undefined) leave the message
+	// `unread` so the next tick or the next spawn retries.
+	const midRunAbort = new AbortController();
+	const midRunPollMs = input.midRunInboxPollMs ?? MID_RUN_INBOX_POLL_MS;
+	const midRunSupported =
+		useStdinHold &&
+		typeof runtime.encodeSteeringMessage === "function" &&
+		typeof proc.writeStdin === "function";
+	let midRunLoop: Promise<void> = Promise.resolve();
+	if (midRunSupported) {
+		const writeStdin = proc.writeStdin as (chunk: string) => Promise<void>;
+		midRunLoop = runMidRunSteeringLoop({
+			repos,
+			bus: client.bus,
+			burrow,
+			runId: run.id,
+			runtime,
+			writeStdin,
+			isStdinClosed: () => stdinClosed,
+			signal: midRunAbort.signal,
+			intervalMs: midRunPollMs,
+			onEvent: input.onEvent,
+		}).catch(() => {
+			// Mid-run delivery is best-effort; never fail an otherwise
+			// successful run on a write or DB hiccup.
+		});
+	}
+
 	const closeStdinIfNeeded = async (events: RuntimeEvent[]): Promise<void> => {
 		if (stdinClosed || !useStdinHold || !proc.closeStdin) return;
 		const trigger = runtime.shouldCloseStdinOnEvent;
@@ -230,6 +276,10 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		]);
 	} finally {
 		if (signal) signal.removeEventListener("abort", onAbort);
+		// Stop the steering loop *before* tearing down stdin so its final
+		// poll tick can't race the closeStdin defensive path below.
+		midRunAbort.abort();
+		await midRunLoop;
 		// Bound proxy teardown to spawn lifetime — a hung CONNECT tunnel
 		// can't pin the run.
 		await proxy?.stop();
@@ -271,6 +321,82 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		return { state: "succeeded", exitCode };
 	}
 	return { state: "failed", exitCode, errorMessage: `agent exited with code ${exitCode}` };
+}
+
+interface MidRunSteeringInput {
+	repos: Repos;
+	bus: EventBus;
+	burrow: Burrow;
+	runId: string;
+	runtime: AgentRuntime;
+	writeStdin: (chunk: string) => Promise<void>;
+	/** Read-only view of the dispatcher's stdinClosed latch. */
+	isStdinClosed: () => boolean;
+	signal: AbortSignal;
+	intervalMs: number;
+	onEvent?: (event: RunEvent) => void;
+}
+
+/**
+ * Poll the inbox while a stdin-holding run is in flight; deliver each
+ * arrived message to the agent through `writeStdin`. Marks rows
+ * `delivered` *after* the write succeeds so a write failure leaves them
+ * `unread` for the next tick / next spawn (parity with the recovery sweep
+ * for orphaned in-flight rows — SPEC §10.2). Emits a `inbox_delivered`
+ * system event so consumers tailing the run can correlate the message id
+ * with the moment it reached the agent.
+ */
+async function runMidRunSteeringLoop(input: MidRunSteeringInput): Promise<void> {
+	const encode = input.runtime.encodeSteeringMessage;
+	if (!encode) return;
+	const { repos, bus, burrow, runId, writeStdin, signal } = input;
+
+	while (!signal.aborted && !input.isStdinClosed()) {
+		const pending = repos.messages.listPending(burrow.id);
+		for (const msg of pending) {
+			if (signal.aborted || input.isStdinClosed()) return;
+			const encoded = encode(msg);
+			if (!encoded) continue; // runtime declined — leave row unread
+			try {
+				await writeStdin(encoded.stdin);
+			} catch {
+				// Sink closed underneath us. Leave the row unread so the
+				// next run (or the post-finalize re-claim) delivers it.
+				return;
+			}
+			repos.messages.markDelivered(msg.id, runId);
+			const persisted = appendAndPublish({
+				repo: repos.events,
+				bus,
+				burrowId: burrow.id,
+				runId,
+				kind: "inbox_delivered",
+				stream: "system",
+				payload: {
+					messageId: msg.id,
+					priority: msg.priority,
+					mode: "mid_run",
+				},
+			});
+			input.onEvent?.(persisted);
+		}
+		await sleepUntil(input.intervalMs, signal);
+	}
+}
+
+function sleepUntil(ms: number, signal: AbortSignal): Promise<void> {
+	if (signal.aborted) return Promise.resolve();
+	return new Promise((resolve) => {
+		const timer = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		}, ms);
+		const onAbort = (): void => {
+			clearTimeout(timer);
+			resolve();
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
 }
 
 async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string, void, void> {

@@ -740,6 +740,22 @@ burrow chat <id>
 
 Opens a TTY where stdin lines are sent as messages and the burrow's event stream is rendered to stdout. Internally: `burrow send` + `burrow logs --follow` glued together, with a small renderer for `text` / `thinking` / `tool_use` events.
 
+### 13.5 Mid-run steering (stdin-held runtimes)
+
+Runtimes whose CLI keeps a live stdin RPC channel for the duration of a turn (today: pi via `--mode rpc`) can have inbox messages delivered *during* the run instead of queueing for the next spawn. Two AgentRuntime hooks govern this:
+
+- `shouldCloseStdinOnEvent(event)` — opts the runtime into the stdin-hold contract. When defined the dispatcher writes the initial prompt but does not close stdin; it tracks events and closes the sink only when this predicate matches (typically the runtime's terminal lifecycle envelope, e.g. pi's `agent_end`). Required prerequisite for mid-run delivery.
+- `encodeSteeringMessage(message)` — renders one inbox row into the bytes to be appended to stdin. Pi maps each message to `{"type":"prompt","message":"[STEERING] (priority: P) <body>"}\n`. Returning `undefined` declines mid-stream delivery for that message; the row stays `unread`.
+
+While both hooks are present and `SpawnResult.writeStdin` is available, the dispatcher runs a poll loop alongside `consumeStdout` that:
+
+1. `SELECT * FROM messages WHERE burrow_id = ? AND state='unread'` on a short tick (default 200 ms).
+2. For each pending row, encodes it via `encodeSteeringMessage` and writes the bytes to the still-open child stdin.
+3. On a successful write, marks the row `state='delivered'` with `delivered_at_run_id` set to the *active* run.
+4. Appends an `inbox_delivered` event (kind=`inbox_delivered`, stream=`system`, payload `{messageId, priority, mode:"mid_run"}`) so observers can correlate.
+
+A write failure leaves the row `unread` for the next tick or the next spawn — same recovery posture as the §10.2 sweep for in-flight rows. Runtimes without `encodeSteeringMessage` (claude-code `--print`, sapling `--prompt`, codex one-shot) keep §13.2/§13.3 semantics unchanged.
+
 ---
 
 ## 14. Event Store & Observation
@@ -753,7 +769,7 @@ Opens a TTY where stdin lines are sent as messages and the burrow's event stream
   "burrowId": "bur_a3f9",
   "runId": "run_2c4d",
   "seq": 42,
-  "kind": "tool_use",       // | tool_result | thinking | text | state_change | error | stderr
+  "kind": "tool_use",       // | tool_result | thinking | text | state_change | error | stderr | inbox_delivered
   "stream": "stdout",       // | stderr | system
   "payload": {              // shape depends on kind
     "tool": "Bash",

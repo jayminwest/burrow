@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Mid-run steering for stdin-held runtimes (`burrow-250d`,
+  SPEC §13.5).** Runtimes that keep a live stdin RPC channel for the
+  duration of a turn — today that's `pi` via `--mode rpc`, which
+  already opted into the stdin-hold contract under `burrow-5db3` — can
+  now have inbox messages delivered *during* a run instead of queueing
+  for the next spawn. Two AgentRuntime hooks govern this:
+  `shouldCloseStdinOnEvent(event)` (required prerequisite, established
+  by `burrow-5db3`) and the new
+  `encodeSteeringMessage(message): { stdin } | undefined`. While both
+  are present and `SpawnResult.writeStdin` is available, the dispatcher
+  runs a 200 ms poll loop alongside `consumeStdout` that claims each
+  newly-arrived `unread` message, writes the encoded bytes to the
+  still-open child stdin, marks the row `delivered`, and appends an
+  `inbox_delivered` system event (`{messageId, priority,
+  mode:"mid_run"}`) so observers can correlate. A write failure leaves
+  the row `unread` for the next tick or the next spawn — same
+  recovery posture as the §10.2 sweep. `pi` maps each message to its
+  existing `{"type":"prompt","message":"[STEERING] (priority: P)
+  <body>"}\n` shape; runtimes that close stdin at spawn time
+  (claude-code `--print`, sapling `--prompt`) leave the hook unset and
+  keep their §13.2/§13.3 next-spawn semantics. New
+  `SpawnResult.writeStdin?(chunk)` surfaces the still-open sink to the
+  dispatcher; the bwrap and sandbox-exec wrappers both supply it via
+  `Bun.Subprocess.stdin.flush()` so writes are sequenced against the
+  child's buffer.
+
 ## [0.2.8] - 2026-05-13
 
 ### Added

@@ -457,6 +457,36 @@ describe("piRuntime.parseEvents", () => {
 	});
 });
 
+describe("piRuntime.encodeSteeringMessage (burrow-250d)", () => {
+	// Mid-run steering encoder: one pi RPC prompt envelope per message,
+	// tagged with the standard [STEERING] prefix and a trailing newline
+	// so the line is framed for pi's NDJSON read loop. The dispatcher's
+	// mid-run poll loop (SPEC §13.5) writes this verbatim to the still-
+	// open child stdin via SpawnResult.writeStdin.
+	test("emits exactly one prompt RPC envelope terminated by \\n", () => {
+		const out = piRuntime.encodeSteeringMessage?.(
+			fakeMessage({ id: "msg_mid", body: "stop and write tests", priority: "high" }),
+		);
+		expect(out?.stdin.endsWith("\n")).toBe(true);
+		const lines = out?.stdin.trimEnd().split("\n") ?? [];
+		expect(lines).toHaveLength(1);
+		const parsed = JSON.parse(lines[0] ?? "") as { type: string; message: string };
+		expect(parsed.type).toBe("prompt");
+		expect(parsed.message).toContain("[STEERING]");
+		expect(parsed.message).toContain("priority: high");
+		expect(parsed.message).toContain("stop and write tests");
+	});
+
+	test("priority prefix matches the at-spawn encoder (parity with encodeInboxMessage)", () => {
+		const msg = fakeMessage({ id: "msg_p", body: "urgent thing", priority: "urgent" });
+		const midRun = piRuntime.encodeSteeringMessage?.(msg)?.stdin.trimEnd();
+		const atSpawn = piRuntime.encodeInboxMessage?.([msg])?.stdin;
+		// Same wire shape regardless of whether the message landed in
+		// pendingMessages (atSpawn) or arrived mid-run (midRun).
+		expect(midRun).toBe(atSpawn);
+	});
+});
+
 describe("piRuntime.shouldCloseStdinOnEvent (burrow-5db3)", () => {
 	// pi v0.74.0 exits the instant stdin closes (mx-d9b3ad), so the
 	// dispatcher must withhold stdin EOF until pi's terminal lifecycle
