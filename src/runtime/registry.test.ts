@@ -3,12 +3,21 @@ import { NotFoundError, ValidationError } from "../core/errors.ts";
 import { AgentRegistry, BUILT_IN_RUNTIMES } from "./registry.ts";
 
 describe("AgentRegistry", () => {
-	test("seeds with the three built-in runtimes by default", () => {
+	test("seeds with the built-in runtimes by default", () => {
 		const reg = new AgentRegistry();
 		expect(reg.has("claude-code")).toBe(true);
 		expect(reg.has("sapling")).toBe(true);
 		expect(reg.has("codex")).toBe(true);
+		expect(reg.has("pi")).toBe(true);
 		expect(reg.list()).toHaveLength(BUILT_IN_RUNTIMES.length);
+	});
+
+	test("pi built-in resolves to the Pi runtime", () => {
+		const reg = new AgentRegistry();
+		const pi = reg.require("pi");
+		expect(pi.id).toBe("pi");
+		expect(pi.displayName).toBe("Pi");
+		expect(pi.supportsResume).toBe(false);
 	});
 
 	test("register accepts a raw AgentRuntime object", () => {

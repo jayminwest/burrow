@@ -1,7 +1,7 @@
 /**
  * In-memory registry for agent runtimes (SPEC §12.3 resolution order).
  *
- * The library boots with the three built-ins pre-registered; user-supplied
+ * The library boots with the built-ins pre-registered; user-supplied
  * AgentConfigs and adapters layer on top via `register`. Same `id` later
  * overrides earlier — letting `~/.config/burrow/agents.toml` or a project's
  * `burrow.toml: agents` patch a built-in (e.g. swap claude-code's settings
@@ -17,6 +17,7 @@ import type { AgentConfig } from "../schemas/agent-config.ts";
 import { claudeCodeRuntime } from "./claude-code.ts";
 import { codexRuntime } from "./codex.ts";
 import { loadAgentConfig } from "./declarative.ts";
+import { piRuntime } from "./pi.ts";
 import type { AgentRuntime } from "./runtime.ts";
 import { saplingRuntime } from "./sapling.ts";
 
@@ -24,6 +25,7 @@ export const BUILT_IN_RUNTIMES: readonly AgentRuntime[] = [
 	claudeCodeRuntime,
 	saplingRuntime,
 	codexRuntime,
+	piRuntime,
 ] as const;
 
 export class AgentRegistry {
