@@ -637,6 +637,14 @@ export interface AgentRuntime {
   /** Pre-spawn hooks (e.g., write Claude Code settings.local.json). */
   prepareWorkspace?(ctx: PrepareContext): Promise<void>;
 
+  /**
+   * Post-spawn hook called when the agent exits successfully. Returns
+   * key/value pairs merged into `runs.metadataJson` — typically the
+   * resume token (`session_id`) the next `buildResumeCommand` reads off
+   * `priorRun.metadataJson`. Best-effort: failures are swallowed.
+   */
+  extractMetadata?(ctx: ExtractMetadataContext): Promise<Record<string, unknown> | undefined>;
+
   /** Health check: is this runtime installed on the host? */
   installCheck(): Promise<{ installed: boolean; version?: string; hint?: string }>;
 }
@@ -655,7 +663,7 @@ export interface SpawnContext {
 - **`claude-code`** — Spawn-per-turn. Uses `claude --output-format stream-json --input-format stream-json`. Steering messages delivered as user turns over stdin between agent turns. Deploys a `.claude/settings.local.json` with PreToolUse guards via `prepareWorkspace`.
 - **`sapling`** — Spawn-per-turn. Native NDJSON event stream. Reuses the harness already used by overstory/mycelium.
 - **`codex`** — One-shot. `codex exec --prompt-file ...`. `supportsResume = false`. Steering messages defer to the next *run*.
-- **`pi`** — Spawn-per-turn. `pi --mode rpc --no-session --no-extensions --provider anthropic --model <pinned>` (pinned to a Claude model that matches the parser's golden RPC fixtures). One `{"type":"prompt","message":"<prompt + steering prefix>"}` line on stdin per run; events stream on stdout. `supportsResume = false` in V1; steering messages defer to the next *run*. Wider RPC vocabulary is collapsed into the SPEC §14.1 taxonomy (see §14.1 footnote).
+- **`pi`** — Spawn-per-turn. `pi --mode rpc --session-dir .pi/sessions --no-extensions --provider anthropic --model <pinned>` (pinned to a Claude model that matches the parser's golden RPC fixtures). One `{"type":"prompt","message":"<prompt + steering prefix>"}` line on stdin per run; events stream on stdout. `supportsResume = true`: `prepareWorkspace` creates the per-burrow session dir, `extractMetadata` reads the resulting `<ts>_<uuid>.jsonl` header to persist `Run.metadataJson.session_id`, and `buildResumeCommand` passes `--session <id>` so the next run continues the same conversation. Wider RPC vocabulary is collapsed into the SPEC §14.1 taxonomy (see §14.1 footnote).
 
 ### 12.3 Declarative adapters (`AgentConfig`)
 

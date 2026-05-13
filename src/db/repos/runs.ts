@@ -99,6 +99,24 @@ export class RunsRepo {
 		return { ...current, state: "running", startedAt: now };
 	}
 
+	/**
+	 * Merge a partial object into `metadataJson`. Existing keys are
+	 * overwritten by matching patch keys; unrelated keys are preserved.
+	 * Used by the dispatcher's `extractMetadata` hook to record resume
+	 * tokens (e.g. `session_id`) without disturbing other metadata the
+	 * row might already carry.
+	 */
+	patchMetadata(id: string, patch: Record<string, unknown>): RunRow {
+		const current = this.require(id);
+		const existing =
+			current.metadataJson !== null && typeof current.metadataJson === "object"
+				? (current.metadataJson as Record<string, unknown>)
+				: {};
+		const merged = { ...existing, ...patch };
+		this.db.update(runs).set({ metadataJson: merged }).where(eq(runs.id, id)).run();
+		return { ...current, metadataJson: merged };
+	}
+
 	finalize(id: string, input: FinalizeRunInput): RunRow {
 		const current = this.require(id);
 		assertRunTransition(current.state, input.state);

@@ -10,7 +10,8 @@
  */
 
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BurrowRow } from "../db/schema.ts";
@@ -18,7 +19,7 @@ import { Client } from "../lib/client.ts";
 import { createLogger } from "../logging/logger.ts";
 import type { SandboxProfile, SpawnCommand, SpawnResult } from "../provider/types.ts";
 import { parsePiEvents } from "../runtime/parsers/pi.ts";
-import { PI_DEFAULT_MODEL, PI_FORCED_ARGV, piRuntime } from "../runtime/pi.ts";
+import { PI_DEFAULT_MODEL, PI_FORCED_ARGV, PI_SESSION_DIR, piRuntime } from "../runtime/pi.ts";
 import type { AgentRuntime } from "../runtime/runtime.ts";
 import type { SpawnFn } from "./dispatch.ts";
 import { startRunDispatcher } from "./dispatcher.ts";
@@ -80,9 +81,9 @@ function fakeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 	};
 }
 
-function seedActiveBurrow(client: Client): BurrowRow {
+function seedActiveBurrow(client: Client, workspacePath = "/ws"): BurrowRow {
 	const profile: SandboxProfile = {
-		workspace: "/ws",
+		workspace: workspacePath,
 		readOnlyMounts: [],
 		network: "none",
 		allowedDomains: [],
@@ -93,7 +94,7 @@ function seedActiveBurrow(client: Client): BurrowRow {
 	return client.repos.burrows.create({
 		kind: "project",
 		projectRoot: "/repo",
-		workspacePath: "/ws",
+		workspacePath,
 		branch: "main",
 		provider: "local",
 		profile,
@@ -305,20 +306,28 @@ function readFixtureLines(name: string): string[] {
 
 describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 	let dataDir: string;
+	let workspaceDir: string;
 	let client: Client;
 
 	beforeEach(async () => {
 		dataDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-pi-"));
+		// Real workspace dir so piRuntime.prepareWorkspace (creates
+		// .pi/sessions/) and .extractMetadata (reads from it) have a host
+		// filesystem to work against. The fakeSpawn replaces the actual
+		// pi binary, but the per-burrow workspace must exist for the
+		// dispatcher's pre/post-spawn hooks.
+		workspaceDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-pi-ws-"));
 		client = await Client.open({ dataDir, configDir: dataDir });
 	});
 
 	afterEach(async () => {
 		await client.close();
 		rmSync(dataDir, { recursive: true, force: true });
+		rmSync(workspaceDir, { recursive: true, force: true });
 	});
 
 	test("success fixture: argv pinned, RPC prompt on stdin, every parser event persisted", async () => {
-		const burrow = seedActiveBurrow(client);
+		const burrow = seedActiveBurrow(client, workspaceDir);
 		client.agents.register(piRuntime);
 
 		const lines = readFixtureLines("pi-v0.74.0-anthropic-success.jsonl");
@@ -389,7 +398,7 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 	});
 
 	test("tools fixture: tool_use + tool_result events flow through dispatcher", async () => {
-		const burrow = seedActiveBurrow(client);
+		const burrow = seedActiveBurrow(client, workspaceDir);
 		client.agents.register(piRuntime);
 
 		const lines = readFixtureLines("pi-v0.74.0-anthropic-tools.jsonl");
@@ -447,5 +456,92 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 			return payload?.type === "tool_execution_start";
 		});
 		expect(execStart).toBeDefined();
+	});
+
+	test("post-spawn extractMetadata writes session_id to Run.metadataJson (burrow-4d8b)", async () => {
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+
+		// Simulate the on-disk shape pi v0.74.0 produces during a run: a
+		// `<ts>_<uuid>.jsonl` whose first line is the canonical session
+		// envelope. The dispatcher's extractMetadata hook reads this file
+		// after spawn exits and patches the run row.
+		const sessionDir = join(workspaceDir, PI_SESSION_DIR);
+		await mkdir(sessionDir, { recursive: true });
+		const sessionId = "019e220f-5d8c-768e-bef3-bb1d6c9a2921";
+		writeFileSync(
+			join(sessionDir, `2026-05-13T15-58-12-877Z_${sessionId}.jsonl`),
+			`${JSON.stringify({ type: "session", version: 3, id: sessionId })}\n`,
+		);
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ stdoutLines: [] }),
+			installCheck: async () => ({ installed: true, version: "0.74.0", path: "/usr/local/bin/pi" }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "Reply with exactly the single word: ack.",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		const finalized = client.runs.get(run.id);
+		expect(finalized.metadataJson).toEqual({ session_id: sessionId });
+	});
+
+	test("resume run: buildResumeCommand pins --session <id> from prior run metadata", async () => {
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+
+		// Prime a "prior" succeeded run carrying a session id, then dispatch
+		// a follow-up run via buildResumeCommand directly. The dispatcher
+		// itself doesn't yet auto-route to resume on the spawn path
+		// (separate scope) — what we assert here is that the runtime
+		// surfaces the right argv shape when given the prior run.
+		const priorRun = client.repos.runs.enqueue({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "p1",
+		});
+		client.repos.runs.markRunning(priorRun.id);
+		client.repos.runs.patchMetadata(priorRun.id, {
+			session_id: "019e220f-5d8c-768e-bef3-bb1d6c9a2921",
+		});
+		client.repos.runs.finalize(priorRun.id, { state: "succeeded", exitCode: 0 });
+
+		const updated = client.repos.runs.require(priorRun.id);
+		expect(updated.metadataJson).toEqual({
+			session_id: "019e220f-5d8c-768e-bef3-bb1d6c9a2921",
+		});
+
+		const resumeCmd = piRuntime.buildResumeCommand?.({
+			burrow,
+			run: { ...updated, id: "run_next", state: "queued" },
+			priorRun: updated,
+			prompt: "p2",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: workspaceDir,
+		});
+		const sessionIdx = resumeCmd?.argv.indexOf("--session") ?? -1;
+		expect(sessionIdx).toBeGreaterThan(-1);
+		expect(resumeCmd?.argv[sessionIdx + 1]).toBe("019e220f-5d8c-768e-bef3-bb1d6c9a2921");
+		// session-dir stays pinned so the new run reads from the same per-burrow
+		// storage the prior run wrote into.
+		const sessionDirIdx = resumeCmd?.argv.indexOf("--session-dir") ?? -1;
+		expect(sessionDirIdx).toBeGreaterThan(-1);
+		expect(resumeCmd?.argv[sessionDirIdx + 1]).toBe(PI_SESSION_DIR);
+		// Argv is consistent with the locked spawn prefix so the regression
+		// guard in pi.test.ts and this e2e check stay aligned.
+		expect(resumeCmd?.argv.slice(0, PI_FORCED_ARGV.length)).toEqual([...PI_FORCED_ARGV]);
+		// Pinned model is still present on resume — bumping the resume
+		// model independently of spawn would split fixtures.
+		const modelIdx = resumeCmd?.argv.indexOf("--model") ?? -1;
+		expect(modelIdx).toBeGreaterThan(-1);
+		expect(resumeCmd?.argv[modelIdx + 1]).toBe(PI_DEFAULT_MODEL);
 	});
 });

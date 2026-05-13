@@ -17,7 +17,9 @@ describe("AgentRegistry", () => {
 		const pi = reg.require("pi");
 		expect(pi.id).toBe("pi");
 		expect(pi.displayName).toBe("Pi");
-		expect(pi.supportsResume).toBe(false);
+		// burrow-4d8b lifted V1 supportsResume:false once the runtime started
+		// pinning --session-dir and propagating session_id via extractMetadata.
+		expect(pi.supportsResume).toBe(true);
 	});
 
 	test("register accepts a raw AgentRuntime object", () => {

@@ -226,6 +226,23 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		return { state: "failed", exitCode, errorMessage: `event stream failed: ${message}` };
 	}
 	if (exitCode === 0) {
+		// Best-effort metadata extraction (e.g. pi session_id for resume).
+		// Failures here never fail an otherwise-successful run — the next
+		// run just won't have a resume token to fall back on.
+		if (runtime.extractMetadata) {
+			try {
+				const patch = await runtime.extractMetadata({
+					burrow,
+					run,
+					workspacePath: burrow.workspacePath,
+				});
+				if (patch && Object.keys(patch).length > 0) {
+					repos.runs.patchMetadata(run.id, patch);
+				}
+			} catch {
+				// swallow — extraction is advisory.
+			}
+		}
 		return { state: "succeeded", exitCode };
 	}
 	return { state: "failed", exitCode, errorMessage: `agent exited with code ${exitCode}` };

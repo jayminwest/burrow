@@ -12,9 +12,12 @@
  * Forced argv flags (locked by unit tests):
  *
  *   - `--mode rpc`            — JSONL command/event protocol.
- *   - `--no-session`          — disable session persistence; V1 is
- *                               one-shot per run (matches codex / sapling
- *                               V1 posture). Pair with `supportsResume:false`.
+ *   - `--session-dir <path>`  — pin per-burrow session storage to
+ *                               `<workspace>/.pi/sessions`. Pi writes one
+ *                               `<ts>_<uuid>.jsonl` file per run there;
+ *                               `extractMetadata` reads the most recent
+ *                               file's header to recover the session id
+ *                               for `buildResumeCommand`.
  *   - `--no-extensions`       — pi's `extension_ui_request` is an
  *                               interactive prompt RPC the dispatcher has
  *                               no path to answer; force-disable to avoid
@@ -35,6 +38,16 @@
  * — surfaced via the install-check hint rather than mutated, since burrow
  * should never silently rewrite a developer's auth state.
  *
+ * Resume contract (lifting burrow-4d8b V1 posture): pi v0.74.0 does NOT
+ * emit the session id on `agent_end`; the only stable surface is the
+ * `--session-dir` filesystem layout (per-session `<ts>_<uuid>.jsonl`) and
+ * the `get_state` RPC reply (`data.sessionId`). `extractMetadata` reads
+ * the newest session file's first line (a `{"type":"session","id":...}`
+ * envelope pi writes synchronously on startup) and persists the UUID as
+ * `Run.metadataJson.session_id`. `buildResumeCommand` then passes
+ * `--session <id>` alongside the pinned `--session-dir` so the next run
+ * resumes the same conversation.
+ *
  * Critical dispatcher invariant (mx-d9b3ad, from the captured fixtures):
  * pi exits the instant stdin closes, even mid-inference. The current
  * dispatcher's "write prompt, close stdin" semantics will end pi before
@@ -44,13 +57,18 @@
  * separately so e2e runs against real pi produce assistant content.
  */
 
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import type { Message } from "../core/types.ts";
 import type { SpawnCommand } from "../provider/types.ts";
 import { parsePiEvents } from "./parsers/pi.ts";
 import type {
 	AgentRuntime,
+	ExtractMetadataContext,
 	InstallCheckResult,
 	ParseContext,
+	PrepareContext,
+	ResumeContext,
 	RuntimeEvent,
 	SpawnContext,
 } from "./runtime.ts";
@@ -67,6 +85,16 @@ const PI_BIN = "pi";
 export const PI_DEFAULT_MODEL = "claude-haiku-4-5";
 
 /**
+ * Per-burrow session storage root, relative to the burrow workspace. Pi's
+ * `--session-dir` flag resolves relative paths against the agent's cwd
+ * (the workspace), so a relative value works for both bwrap (where the
+ * workspace is remapped to `/workspace`) and sandbox-exec (where the
+ * workspace stays at its host path). The host side reads from
+ * `<workspacePath>/<PI_SESSION_DIR>` to recover the session id post-spawn.
+ */
+export const PI_SESSION_DIR = ".pi/sessions";
+
+/**
  * Locked prefix of `pi`'s argv. The trailing `--model <PI_DEFAULT_MODEL>`
  * pair is appended in `buildSpawnCommand` — split out so the test that
  * enforces flag presence can assert the prefix without coupling to the
@@ -76,7 +104,8 @@ export const PI_FORCED_ARGV: readonly string[] = [
 	PI_BIN,
 	"--mode",
 	"rpc",
-	"--no-session",
+	"--session-dir",
+	PI_SESSION_DIR,
 	"--no-extensions",
 	"--provider",
 	"anthropic",
@@ -106,12 +135,22 @@ export const PI_ENV_PASSTHROUGH: readonly string[] = [
 export const piRuntime: AgentRuntime = {
 	id: "pi",
 	displayName: "Pi",
-	supportsResume: false,
+	supportsResume: true,
 	envPassthrough: PI_ENV_PASSTHROUGH,
 
 	buildSpawnCommand(ctx: SpawnContext): SpawnCommand {
 		return {
 			argv: [...PI_FORCED_ARGV, "--model", PI_DEFAULT_MODEL],
+			stdin: encodePiStdin(ctx.prompt, ctx.pendingMessages),
+		};
+	},
+
+	buildResumeCommand(ctx: ResumeContext): SpawnCommand {
+		const argv = [...PI_FORCED_ARGV, "--model", PI_DEFAULT_MODEL];
+		const sessionId = readSessionId(ctx.priorRun.metadataJson);
+		if (sessionId) argv.push("--session", sessionId);
+		return {
+			argv,
 			stdin: encodePiStdin(ctx.prompt, ctx.pendingMessages),
 		};
 	},
@@ -122,6 +161,15 @@ export const piRuntime: AgentRuntime = {
 
 	encodeInboxMessage(messages: Message[]): { stdin: string } {
 		return { stdin: messages.map(piPromptCommandFromMessage).join("\n") };
+	},
+
+	async prepareWorkspace(ctx: PrepareContext): Promise<void> {
+		mkdirSync(join(ctx.workspacePath, PI_SESSION_DIR), { recursive: true });
+	},
+
+	async extractMetadata(ctx: ExtractMetadataContext): Promise<Record<string, unknown> | undefined> {
+		const sessionId = readNewestPiSessionId(join(ctx.workspacePath, PI_SESSION_DIR));
+		return sessionId ? { session_id: sessionId } : undefined;
 	},
 
 	async installCheck(): Promise<InstallCheckResult> {
@@ -155,4 +203,62 @@ function piPromptCommand(text: string): string {
 function piPromptCommandFromMessage(message: Message): string {
 	const tag = `[STEERING] (priority: ${message.priority}) `;
 	return piPromptCommand(`${tag}${message.body}`);
+}
+
+function readSessionId(metadata: unknown): string | undefined {
+	if (metadata === null || typeof metadata !== "object") return undefined;
+	const v = (metadata as Record<string, unknown>).session_id;
+	return typeof v === "string" && v.length > 0 ? v : undefined;
+}
+
+/**
+ * Read the session id from the newest `*.jsonl` in `sessionDir`. Pi writes
+ * each session's UUID into the first line of the file as
+ * `{"type":"session","version":N,"id":"<uuid>",...}` synchronously on
+ * startup, so the file is guaranteed to exist with at least one line by
+ * the time the agent has emitted any output. Returns `undefined` when the
+ * directory is missing, empty, or the header line doesn't parse —
+ * extraction is best-effort and the dispatcher swallows failures.
+ *
+ * Exported for unit tests.
+ */
+export function readNewestPiSessionId(sessionDir: string): string | undefined {
+	if (!existsSync(sessionDir)) return undefined;
+	let entries: string[];
+	try {
+		entries = readdirSync(sessionDir).filter((n) => n.endsWith(".jsonl"));
+	} catch {
+		return undefined;
+	}
+	if (entries.length === 0) return undefined;
+
+	let newest: { path: string; mtimeMs: number } | undefined;
+	for (const name of entries) {
+		const path = join(sessionDir, name);
+		try {
+			const stat = statSync(path);
+			if (newest === undefined || stat.mtimeMs > newest.mtimeMs) {
+				newest = { path, mtimeMs: stat.mtimeMs };
+			}
+		} catch {
+			// skip unreadable entries
+		}
+	}
+	if (!newest) return undefined;
+
+	let body: string;
+	try {
+		body = readFileSync(newest.path, "utf8");
+	} catch {
+		return undefined;
+	}
+	const firstNewline = body.indexOf("\n");
+	const header = firstNewline === -1 ? body : body.slice(0, firstNewline);
+	try {
+		const parsed = JSON.parse(header) as { type?: string; id?: unknown };
+		if (parsed.type !== "session") return undefined;
+		return typeof parsed.id === "string" && parsed.id.length > 0 ? parsed.id : undefined;
+	} catch {
+		return undefined;
+	}
 }

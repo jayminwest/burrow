@@ -61,6 +61,12 @@ export interface PrepareContext {
 	workspacePath: string;
 }
 
+export interface ExtractMetadataContext {
+	burrow: Burrow;
+	run: Run;
+	workspacePath: string;
+}
+
 /**
  * Partial event shape produced by `parseEvents`. The run-loop layer fills in
  * `id`, `seq`, `burrowId`, `runId`, and `ts` when persisting.
@@ -80,6 +86,20 @@ export interface AgentRuntime {
 	buildResumeCommand?(ctx: ResumeContext): SpawnCommand;
 	encodeInboxMessage?(messages: Message[]): { stdin: string };
 	prepareWorkspace?(ctx: PrepareContext): Promise<void>;
+
+	/**
+	 * Post-spawn hook called by the dispatcher once the agent process exits
+	 * successfully. Returns key/value pairs to merge into `runs.metadataJson`
+	 * — e.g. the resume token (`session_id`) the next `buildResumeCommand`
+	 * call will read off `priorRun.metadataJson`. Implementations may inspect
+	 * the workspace filesystem (pi's session files) or scan persisted events
+	 * (claude-code's `system/init` envelope).
+	 *
+	 * Best-effort: failures and `undefined` returns are swallowed so a
+	 * runtime that can't recover a session id never fails an otherwise
+	 * successful run.
+	 */
+	extractMetadata?(ctx: ExtractMetadataContext): Promise<Record<string, unknown> | undefined>;
 
 	/**
 	 * Host paths the runtime needs read-only inside the sandbox to authenticate

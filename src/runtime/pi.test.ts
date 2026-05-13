@@ -1,11 +1,17 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { BurrowRow, MessageRow, RunRow } from "../db/schema.ts";
 import {
 	encodePiStdin,
 	PI_DEFAULT_MODEL,
 	PI_ENV_PASSTHROUGH,
 	PI_FORCED_ARGV,
+	PI_SESSION_DIR,
 	piRuntime,
+	readNewestPiSessionId,
 } from "./pi.ts";
 
 function fakeBurrow(): BurrowRow {
@@ -61,12 +67,13 @@ function fakeMessage(extra: Partial<MessageRow> = {}): MessageRow {
 }
 
 describe("piRuntime identity", () => {
-	test("declares id, displayName, and supportsResume:false (V1 one-shot)", () => {
+	test("declares id, displayName, and supportsResume:true (burrow-4d8b)", () => {
 		expect(piRuntime.id).toBe("pi");
 		expect(piRuntime.displayName).toBe("Pi");
-		expect(piRuntime.supportsResume).toBe(false);
-		// V1 is one-shot — no resume command surface.
-		expect(piRuntime.buildResumeCommand).toBeUndefined();
+		expect(piRuntime.supportsResume).toBe(true);
+		// V1 deferred resume; lifted now that the runtime pins a session
+		// directory and propagates session_id via extractMetadata.
+		expect(piRuntime.buildResumeCommand).toBeDefined();
 	});
 });
 
@@ -96,11 +103,28 @@ describe("piRuntime.buildSpawnCommand", () => {
 			"pi",
 			"--mode",
 			"rpc",
-			"--no-session",
+			"--session-dir",
+			PI_SESSION_DIR,
 			"--no-extensions",
 			"--provider",
 			"anthropic",
 		]);
+	});
+
+	test("session-dir is the per-burrow .pi/sessions path (resume storage)", () => {
+		expect(PI_SESSION_DIR).toBe(".pi/sessions");
+		const cmd = piRuntime.buildSpawnCommand({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			prompt: "p",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+		});
+		const idx = cmd.argv.indexOf("--session-dir");
+		expect(idx).toBeGreaterThan(-1);
+		expect(cmd.argv[idx + 1]).toBe(PI_SESSION_DIR);
+		expect(cmd.argv).not.toContain("--no-session");
 	});
 
 	test("stdin carries a single RPC prompt command for a plain prompt", () => {
@@ -211,6 +235,212 @@ describe("piRuntime.encodeInboxMessage", () => {
 		expect(parsed[0]?.type).toBe("prompt");
 		expect(parsed[0]?.message).toContain("priority: urgent");
 		expect(parsed[1]?.message).toContain("priority: low");
+	});
+});
+
+describe("piRuntime.buildResumeCommand", () => {
+	test("appends --session <session_id> when metadata carries one", () => {
+		const cmd = piRuntime.buildResumeCommand?.({
+			burrow: fakeBurrow(),
+			run: fakeRun({ id: "run_new" }),
+			priorRun: fakeRun({
+				id: "run_prior",
+				state: "succeeded",
+				metadataJson: { session_id: "019e220e-3e2e-73cd-ac0b-ed36c073dfed" },
+			}),
+			prompt: "continue",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+		});
+		// Forced prefix + model + --session token. --session-dir stays in the
+		// prefix so resume reads from the same per-burrow storage that the
+		// initial spawn wrote into.
+		expect(cmd?.argv.slice(0, PI_FORCED_ARGV.length)).toEqual([...PI_FORCED_ARGV]);
+		const idx = cmd?.argv.indexOf("--session") ?? -1;
+		expect(idx).toBeGreaterThan(-1);
+		expect(cmd?.argv[idx + 1]).toBe("019e220e-3e2e-73cd-ac0b-ed36c073dfed");
+	});
+
+	test("falls back to a fresh argv when no session_id is present", () => {
+		const cmd = piRuntime.buildResumeCommand?.({
+			burrow: fakeBurrow(),
+			run: fakeRun({ id: "run_new" }),
+			priorRun: fakeRun({ id: "run_prior", state: "succeeded" }),
+			prompt: "continue",
+			pendingMessages: [],
+			envResolved: {},
+			workspacePath: "/ws",
+		});
+		expect(cmd?.argv).not.toContain("--session");
+		// Still pins session-dir so the new run keeps the same storage root.
+		expect(cmd?.argv.slice(0, PI_FORCED_ARGV.length)).toEqual([...PI_FORCED_ARGV]);
+	});
+
+	test("encodes the prompt + steering on stdin (parity with buildSpawnCommand)", () => {
+		const cmd = piRuntime.buildResumeCommand?.({
+			burrow: fakeBurrow(),
+			run: fakeRun({ id: "run_new" }),
+			priorRun: fakeRun({
+				id: "run_prior",
+				state: "succeeded",
+				metadataJson: { session_id: "sess-z" },
+			}),
+			prompt: "continue",
+			pendingMessages: [fakeMessage()],
+			envResolved: {},
+			workspacePath: "/ws",
+		});
+		const lines = (cmd?.stdin as string).split("\n");
+		expect(lines).toHaveLength(2);
+		expect(JSON.parse(lines[0] ?? "")).toEqual({ type: "prompt", message: "continue" });
+		expect(lines[1]).toContain("[STEERING]");
+	});
+});
+
+describe("piRuntime.prepareWorkspace", () => {
+	let dir: string;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "burrow-pi-prep-"));
+	});
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("creates the .pi/sessions/ directory under the workspace", async () => {
+		await piRuntime.prepareWorkspace?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		const fs = await import("node:fs");
+		expect(fs.statSync(join(dir, PI_SESSION_DIR)).isDirectory()).toBe(true);
+	});
+
+	test("is idempotent when the directory already exists", async () => {
+		await piRuntime.prepareWorkspace?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		await piRuntime.prepareWorkspace?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		expect(readdirSync(join(dir, PI_SESSION_DIR))).toEqual([]);
+	});
+});
+
+describe("piRuntime.extractMetadata", () => {
+	let dir: string;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "burrow-pi-extract-"));
+	});
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("reads session_id from the newest session jsonl header", async () => {
+		const sessionDir = join(dir, PI_SESSION_DIR);
+		await mkdir(sessionDir, { recursive: true });
+		// Two sessions — the second one (later mtime) wins.
+		await writeFile(
+			join(sessionDir, "2026-05-13T15-56-59-311Z_old-session-id.jsonl"),
+			`${JSON.stringify({ type: "session", version: 3, id: "old-session-id" })}\n`,
+		);
+		// Force an older mtime on the first file.
+		const fs = await import("node:fs/promises");
+		const oldTime = new Date(Date.now() - 60_000);
+		await fs.utimes(
+			join(sessionDir, "2026-05-13T15-56-59-311Z_old-session-id.jsonl"),
+			oldTime,
+			oldTime,
+		);
+		await writeFile(
+			join(sessionDir, "2026-05-13T15-58-00-000Z_new-session-id.jsonl"),
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "019e220e-3e2e-73cd-ac0b-ed36c073dfed",
+			})}\n${JSON.stringify({ type: "model_change" })}\n`,
+		);
+		const patch = await piRuntime.extractMetadata?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		expect(patch).toEqual({ session_id: "019e220e-3e2e-73cd-ac0b-ed36c073dfed" });
+	});
+
+	test("returns undefined when the session directory is missing", async () => {
+		const patch = await piRuntime.extractMetadata?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		expect(patch).toBeUndefined();
+	});
+
+	test("returns undefined when no jsonl files are present", async () => {
+		await mkdir(join(dir, PI_SESSION_DIR), { recursive: true });
+		const patch = await piRuntime.extractMetadata?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		expect(patch).toBeUndefined();
+	});
+
+	test("returns undefined when the header line is malformed", async () => {
+		const sessionDir = join(dir, PI_SESSION_DIR);
+		await mkdir(sessionDir, { recursive: true });
+		writeFileSync(join(sessionDir, "broken.jsonl"), "not json\n");
+		const patch = await piRuntime.extractMetadata?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		expect(patch).toBeUndefined();
+	});
+
+	test("returns undefined when the header is not a session envelope", async () => {
+		const sessionDir = join(dir, PI_SESSION_DIR);
+		await mkdir(sessionDir, { recursive: true });
+		// First line is e.g. a model_change — not a session header.
+		writeFileSync(
+			join(sessionDir, "wrong-shape.jsonl"),
+			`${JSON.stringify({ type: "model_change", modelId: "x" })}\n`,
+		);
+		const patch = await piRuntime.extractMetadata?.({
+			burrow: fakeBurrow(),
+			run: fakeRun(),
+			workspacePath: dir,
+		});
+		expect(patch).toBeUndefined();
+	});
+});
+
+describe("readNewestPiSessionId", () => {
+	let dir: string;
+	beforeEach(() => {
+		dir = mkdtempSync(join(tmpdir(), "burrow-pi-newest-"));
+	});
+	afterEach(() => {
+		rmSync(dir, { recursive: true, force: true });
+	});
+
+	test("returns undefined for a missing directory", () => {
+		expect(readNewestPiSessionId(join(dir, "does-not-exist"))).toBeUndefined();
+	});
+
+	test("ignores non-jsonl files in the same directory", () => {
+		writeFileSync(join(dir, "notes.txt"), "ignore");
+		writeFileSync(
+			join(dir, "session.jsonl"),
+			`${JSON.stringify({ type: "session", id: "abc" })}\n`,
+		);
+		expect(readNewestPiSessionId(dir)).toBe("abc");
 	});
 });
 
