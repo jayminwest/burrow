@@ -134,7 +134,15 @@ export async function runServeCommand(input: ServeCommandInput): Promise<ServeCo
 
 	let handle: Awaited<ReturnType<typeof startServer>>;
 	try {
-		handle = startServer(input.client, { transport, auth, logger });
+		// Wire the dispatcher's drain bit through to the HTTP layer so
+		// `POST /admin/drain` can flip it and the burrow + run create
+		// handlers consult it (pl-cb3e step 4 / burrow-79ad).
+		handle = startServer(input.client, {
+			transport,
+			auth,
+			logger,
+			admin: { drain: dispatcher.drain },
+		});
 	} catch (err) {
 		await dispatcher.stop({ force: true });
 		throw err;

@@ -52,6 +52,26 @@ export interface RunDispatcherHandle {
 	 * to finish" without polling DB state.
 	 */
 	isIdle(): boolean;
+	/**
+	 * Drain controller (pl-cb3e step 4 / burrow-79ad). When flipped on
+	 * (typically via `POST /admin/drain {drain: true}`) the HTTP layer
+	 * starts rejecting new burrow + run creation with 503 `worker_draining`
+	 * — but in-flight runs continue to terminal state. The dispatcher
+	 * itself stays oblivious to the flag; it only owns the bit so a single
+	 * source of truth survives across multiple HTTP listeners.
+	 */
+	drain: DrainController;
+}
+
+/**
+ * Drain bit owned by the dispatcher. Read by the createBurrow / createRun
+ * handlers (gated to 503 `worker_draining` when set), flipped by the
+ * `/admin/drain` admin route. Plain mutable boolean — no events fire on
+ * change; the next HTTP request observes the new value via `isDraining()`.
+ */
+export interface DrainController {
+	isDraining(): boolean;
+	setDrain(value: boolean): void;
 }
 
 export function startRunDispatcher(
@@ -80,8 +100,17 @@ export function startRunDispatcher(
 
 	let started = false;
 	let stopped = false;
+	let draining = false;
+
+	const drain: DrainController = {
+		isDraining: () => draining,
+		setDrain: (value) => {
+			draining = value;
+		},
+	};
 
 	return {
+		drain,
 		start() {
 			if (started) return { recovered: { failedRunIds: [], resetMessageIds: [] } };
 			started = true;

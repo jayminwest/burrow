@@ -16,11 +16,12 @@
  */
 
 import type { Client } from "../lib/client.ts";
+import { buildAdminRoutes, withDrainGate } from "./admin.ts";
 import { notImplemented } from "./errors.ts";
 import { handlerFor } from "./handlers.ts";
 import { openApiHtmlHandler, openApiJsonHandler } from "./openapi/handlers.ts";
 import { jsonResponse } from "./response.ts";
-import type { Route, RouteHandler } from "./types.ts";
+import type { AdminControls, Route, RouteHandler } from "./types.ts";
 
 /**
  * Build the canonical route table. When `client` is null (router-only tests
@@ -71,8 +72,40 @@ const metaRoutes: readonly Route[] = [
 	},
 ];
 
-export function buildRoutesWithHealth(client: Client | null): Route[] {
-	return [...metaRoutes, ...buildRoutes(client)];
+/**
+ * Build the full route list mounted by `startServer`: meta (health,
+ * openapi), admin (when `opts.admin` is provided), and the canonical
+ * mirrored Client routes from `buildRoutes`. When admin is provided, the
+ * burrow + run create handlers are wrapped with `withDrainGate` so they
+ * 503 `worker_draining` while the dispatcher's drain bit is set
+ * (pl-cb3e step 4 / burrow-79ad).
+ */
+export function buildRoutesWithHealth(
+	client: Client | null,
+	opts: { admin?: AdminControls } = {},
+): Route[] {
+	const mirrored = buildRoutes(client);
+	const gated = opts.admin ? gateMirroredRoutes(mirrored, opts.admin) : mirrored;
+	const admin = opts.admin ? buildAdminRoutes(opts.admin) : [];
+	return [...metaRoutes, ...admin, ...gated];
+}
+
+/**
+ * Wrap the burrow + run create handlers with the drain gate. Other routes
+ * pass through unchanged — reads, lifecycle (cancel, stop, resume, delete),
+ * inbox sends, and every streaming surface keep working during drain so
+ * operators can still observe + tear down in-flight work.
+ */
+function gateMirroredRoutes(routes: readonly Route[], admin: AdminControls): Route[] {
+	return routes.map((route) => {
+		if (
+			route.method === "POST" &&
+			(route.pattern === "/burrows" || route.pattern === "/burrows/:id/runs")
+		) {
+			return { ...route, handler: withDrainGate(admin.drain, route.handler) };
+		}
+		return route;
+	});
 }
 
 interface RouteEntry {

@@ -55,7 +55,8 @@ const IDLE_TIMEOUT_DISABLED = 0;
  */
 export function startServer(client: Client | null, opts: ServeOptions = {}): ServeHandle {
 	const logger = opts.logger ?? createLogger();
-	const routes: readonly Route[] = opts.routes ?? buildRoutesWithHealth(client);
+	const routes: readonly Route[] =
+		opts.routes ?? buildRoutesWithHealth(client, opts.admin ? { admin: opts.admin } : {});
 	const auth = opts.auth ?? NO_AUTH;
 	const transport = opts.transport ?? DEFAULT_TRANSPORT;
 

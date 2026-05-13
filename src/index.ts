@@ -25,6 +25,7 @@ export {
 	SecretResolutionError,
 	ToolchainMismatch,
 	ValidationError,
+	WorkerDrainingError,
 	WorkspaceMaterializationError,
 } from "./core/errors.ts";
 export { generateId, type IdKind, isId } from "./core/ids.ts";
@@ -237,6 +238,7 @@ export {
 	type StartProxyFn as DispatchStartProxyFn,
 } from "./runner/dispatch.ts";
 export {
+	type DrainController,
 	type RunDispatcherHandle,
 	type RunDispatcherOptions,
 	startRunDispatcher,

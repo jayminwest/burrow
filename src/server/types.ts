@@ -12,6 +12,7 @@
  */
 
 import type { Logger } from "../logging/logger.ts";
+import type { DrainController } from "../runner/dispatcher.ts";
 import type { AuthProvider } from "./auth.ts";
 
 /**
@@ -86,6 +87,18 @@ export interface ServeOptions {
 	routes?: readonly Route[];
 	/** Pre-resolved logger; one is created if omitted. */
 	logger?: Logger;
+	/**
+	 * Admin controls (pl-cb3e step 4 / burrow-79ad). When provided, mounts
+	 * `POST /admin/drain` AND wraps the burrow + run create handlers so they
+	 * return 503 `worker_draining` while drain is set. Wired by the CLI's
+	 * `runServeCommand` from the in-process dispatcher; library callers that
+	 * skip the dispatcher leave this unset and the admin surface stays off.
+	 */
+	admin?: AdminControls;
+}
+
+export interface AdminControls {
+	drain: DrainController;
 }
 
 export interface ServeHandle {

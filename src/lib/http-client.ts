@@ -36,6 +36,7 @@ import {
 	SecretResolutionError,
 	ToolchainMismatch,
 	ValidationError,
+	WorkerDrainingError,
 	WorkspaceMaterializationError,
 } from "../core/errors.ts";
 import type {
@@ -842,6 +843,8 @@ function rehydrateError(status: number, envelope: ErrorEnvelope | null): Error {
 			return new ToolchainMismatch(message, opts);
 		case "secret_resolution_failed":
 			return new SecretResolutionError(message, opts);
+		case "worker_draining":
+			return new WorkerDrainingError(message, opts);
 		default:
 			return new HttpClientError(status, code, message, hint);
 	}

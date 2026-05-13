@@ -59,6 +59,17 @@ export class CredentialError extends BurrowError {
 }
 
 /**
+ * Worker is draining (`POST /admin/drain {drain: true}` was set on the
+ * server). Transient backpressure: the worker rejects new burrow + run
+ * creation while in-flight work finishes. Callers (warren, orchestrators)
+ * should treat this as "retry against another worker" rather than a hard
+ * failure. Mapped to HTTP 503 by the server's renderError.
+ */
+export class WorkerDrainingError extends BurrowError {
+	readonly code = "worker_draining";
+}
+
+/**
  * Render a BurrowError for terminal display. Non-BurrowError values fall back
  * to a generic shape so unexpected throws still surface a sensible message.
  */

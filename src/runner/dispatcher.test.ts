@@ -262,6 +262,44 @@ describe("startRunDispatcher", () => {
 		expect(client.runs.get(run.id).errorMessage).toContain("stopped");
 	});
 
+	test("drain controller starts off and round-trips set/get (burrow-79ad)", async () => {
+		const dispatcher = startRunDispatcher(client, { logger: silentLogger, spawn: fakeSpawn() });
+		dispatcher.start();
+		try {
+			expect(dispatcher.drain.isDraining()).toBe(false);
+			dispatcher.drain.setDrain(true);
+			expect(dispatcher.drain.isDraining()).toBe(true);
+			dispatcher.drain.setDrain(false);
+			expect(dispatcher.drain.isDraining()).toBe(false);
+		} finally {
+			await dispatcher.stop();
+		}
+	});
+
+	test("drain set mid-flight does not stop the dispatcher from draining in-flight runs (burrow-79ad)", async () => {
+		const burrow = seedActiveBurrow(client);
+		client.agents.register(fakeRuntime());
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ stdoutLines: ["ok"] }),
+		});
+		dispatcher.start();
+		// The drain bit gates HTTP-layer creation; the dispatcher itself
+		// keeps executing whatever has already been enqueued. Verify a run
+		// inserted *after* drain is set still finalizes when enqueued via
+		// the library API (the gate only sits on the HTTP createRun path).
+		dispatcher.drain.setDrain(true);
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+		expect(client.runs.get(run.id).state).toBe("succeeded");
+	});
+
 	test("isIdle is true once all enqueued runs have finalized", async () => {
 		const burrow = seedActiveBurrow(client);
 		client.agents.register(fakeRuntime());
