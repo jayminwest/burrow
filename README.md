@@ -51,7 +51,7 @@ See [`examples/`](examples) for a runnable walkthrough plus a custom-agent recip
 ## What you get
 
 - **Native sandboxing.** `bwrap` on Linux, `sandbox-exec` on macOS. No Docker, no container images, no daemon. The host filesystem outside the workspace is unreachable; the network policy is one of `none | restricted | open`.
-- **Any CLI agent.** Built-in runtimes for `claude-code`, `sapling`, and `codex`. New agents land via a declarative `[[agents]]` stanza in `burrow.toml` — zero core code changes.
+- **Any CLI agent.** Built-in runtimes for `claude-code`, `sapling`, `codex`, and `pi`. New agents land via a declarative `[[agents]]` stanza in `burrow.toml` — zero core code changes.
 - **Parallel work.** A project burrow plus N task burrows, each on its own git worktree, running concurrently behind a per-burrow FIFO queue.
 - **Steerable runs.** `burrow send <id> "..."` queues a steering message; the next agent turn delivers it.
 - **Durable state.** `bun:sqlite` (WAL) persists burrows, runs, events, and inbox messages. `kill -9` leaves the system recoverable; `burrow destroy` archives the full event log to NDJSON.
