@@ -49,10 +49,14 @@ cross-linked to the canonical multi-worker design.
   carries a bind-host posture note alongside the existing auth section,
   so generated client docs reflect the multi-worker contract
   (`burrow-37c3`, `pl-cb3e` step 5).
-- **`docs(roadmap+spec)`** — ROADMAP R-02 is marked superseded by
-  `burrow-62ce`; SPEC §27 (multi-host) cross-links to the canonical
-  multi-worker design in `pl-cb3e`. ROADMAP R-07 marked shipped on the
-  burrow side; R-06 reframed (`burrow-d380`, `pl-cb3e` step 6).
+- **`docs(roadmap+spec)`** — ROADMAP R-02 (FlyProvider + SshProvider) is
+  marked superseded by `burrow-62ce`; SPEC §27 (multi-host) cross-links
+  to the canonical multi-worker design in `pl-cb3e` (`burrow-d380`,
+  `pl-cb3e` step 6).
+- **`docs(roadmap)`** — ROADMAP R-07 marked shipped on the burrow side
+  (workspace-seed HTTP API via `pl-2467`); R-06 reframed as mycelium's
+  folding into warren + overstory's hierarchy direction is under
+  reconsideration.
 
 ### Tests
 
