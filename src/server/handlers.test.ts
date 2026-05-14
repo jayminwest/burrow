@@ -519,16 +519,120 @@ describe("server handlers", () => {
 		rmSync(ws, { recursive: true, force: true });
 	});
 
-	test("GET /burrows/:id/files without ?path → 400", async () => {
+	test("GET /burrows/:id/files for unknown burrow → 404", async () => {
+		const res = await fetch(`${handle.url}/burrows/bur_nope/files?path=x.txt`);
+		expect(res.status).toBe(404);
+	});
+
+	/* ------------------------------------------------------------------- */
+	/* Workspace file listing (burrow-18ca)                                */
+	/* ------------------------------------------------------------------- */
+
+	test("GET /burrows/:id/files (no path) lists workspace files recursively", async () => {
 		const ws = mkTmp();
 		const burrow = seedBurrow(client, { workspacePath: ws });
+		await mkdir(join(ws, "sub", "deeper"), { recursive: true });
+		await writeFile(join(ws, "top.txt"), "hello");
+		await writeFile(join(ws, "sub", "mid.txt"), "mid");
+		await writeFile(join(ws, "sub", "deeper", "leaf.txt"), "leaf");
 		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`);
-		expect(res.status).toBe(400);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			files: { path: string; mode: number; size: number }[];
+		};
+		const paths = body.files.map((f) => f.path);
+		expect(paths).toEqual(["sub/deeper/leaf.txt", "sub/mid.txt", "top.txt"]);
+		const top = body.files.find((f) => f.path === "top.txt");
+		expect(top?.size).toBe(5);
+		expect(typeof top?.mode).toBe("number");
 		rmSync(ws, { recursive: true, force: true });
 	});
 
-	test("GET /burrows/:id/files for unknown burrow → 404", async () => {
-		const res = await fetch(`${handle.url}/burrows/bur_nope/files?path=x.txt`);
+	test("GET /burrows/:id/files?prefix= scopes the listing to a subtree", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		await mkdir(join(ws, ".mulch", "expertise"), { recursive: true });
+		await writeFile(join(ws, ".mulch", "expertise", "a.jsonl"), "x\n");
+		await writeFile(join(ws, ".mulch", "expertise", "b.jsonl"), "y\n");
+		await writeFile(join(ws, "ignored.txt"), "z");
+		const res = await fetch(
+			`${handle.url}/burrows/${burrow.id}/files?prefix=${encodeURIComponent(".mulch/expertise")}`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { files: { path: string }[] };
+		expect(body.files.map((f) => f.path)).toEqual([
+			".mulch/expertise/a.jsonl",
+			".mulch/expertise/b.jsonl",
+		]);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files (no path) excludes reserved entries from the top-level listing", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		await mkdir(join(ws, ".git", "objects"), { recursive: true });
+		await writeFile(join(ws, ".git", "HEAD"), "ref: x");
+		await writeFile(join(ws, ".gitconfig.burrow"), "[user]\nname=x");
+		await writeFile(join(ws, "real.txt"), "ok");
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { files: { path: string }[] };
+		const paths = body.files.map((f) => f.path);
+		expect(paths).toEqual(["real.txt"]);
+		expect(paths.some((p) => p.startsWith(".git"))).toBe(false);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files lists in-workspace symlinks without traversing them", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		await mkdir(join(ws, "real"), { recursive: true });
+		await writeFile(join(ws, "real", "f.txt"), "x");
+		await symlink("real", join(ws, "alias"));
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { files: { path: string }[] };
+		const paths = body.files.map((f) => f.path);
+		expect(paths).toContain("real/f.txt");
+		expect(paths).toContain("alias");
+		// Symlink is listed but not recursed — no "alias/f.txt" entry.
+		expect(paths.some((p) => p.startsWith("alias/"))).toBe(false);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files?prefix=.. rejects with 400", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files?prefix=..`);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string } };
+		expect(body.error.code).toBe("validation_error");
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files?prefix=.git rejects (reserved entry)", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files?prefix=.git`);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error: { code: string; message: string } };
+		expect(body.error.code).toBe("validation_error");
+		expect(body.error.message).toMatch(/reserved/);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files?prefix= with non-existent dir → 404", async () => {
+		const ws = mkTmp();
+		const burrow = seedBurrow(client, { workspacePath: ws });
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/files?prefix=does/not/exist`);
+		expect(res.status).toBe(404);
+		const body = (await res.json()) as { error: { code: string } };
+		expect(body.error.code).toBe("not_found");
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("GET /burrows/:id/files (no path) on unknown burrow → 404", async () => {
+		const res = await fetch(`${handle.url}/burrows/bur_nope/files`);
 		expect(res.status).toBe(404);
 	});
 

@@ -146,6 +146,29 @@ export interface HttpFilesReadOptions {
 	encoding?: HttpWorkspaceFileEncoding;
 }
 
+export interface HttpFilesListOptions {
+	/**
+	 * Workspace-relative directory to scope the listing to. Same path-validation
+	 * contract as `files.read`: rejects `..`, absolute paths, symlink escapes,
+	 * and reserved entries (`.git`, `.gitconfig.burrow`). Omit to walk the
+	 * whole workspace.
+	 */
+	prefix?: string;
+}
+
+export interface HttpWorkspaceFileEntry {
+	/** Workspace-relative path, forward-slash separated. */
+	path: string;
+	/** Raw `st_mode` from `lstat` (includes file-type bits per stat(2)). */
+	mode: number;
+	/** Byte size from `lstat`; for symlinks, the link's own length. */
+	size: number;
+}
+
+export interface HttpFilesListResult {
+	files: HttpWorkspaceFileEntry[];
+}
+
 export interface HttpEventTailFilter {
 	burrowId?: string;
 	kinds?: string[];
@@ -392,6 +415,28 @@ export class HttpFilesClient {
 		query.set("path", path);
 		if (opts.encoding !== undefined) query.set("encoding", opts.encoding);
 		return this.transport.request<HttpWorkspaceFileOutput>({
+			method: "GET",
+			path: `/burrows/${encodeURIComponent(burrowId)}/files`,
+			query,
+		});
+	}
+
+	/**
+	 * Recursive workspace listing (burrow-18ca). With no `prefix`, walks the
+	 * whole workspace and excludes the top-level reserved entries (`.git`,
+	 * `.gitconfig.burrow`). With a `prefix`, scopes the walk to that subtree;
+	 * same path-validation as `read` (`..`, absolute, symlink-escape, and
+	 * reserved-entry escapes all reject as `ValidationError`).
+	 *
+	 * Used by warren's reap path to enumerate agent-controlled files (e.g.
+	 * `.mulch/expertise/*.jsonl`) before reading each one back with `read`.
+	 * Symlinks inside the workspace appear in the result but are not
+	 * traversed by the walker.
+	 */
+	async list(burrowId: string, opts: HttpFilesListOptions = {}): Promise<HttpFilesListResult> {
+		const query = new URLSearchParams();
+		if (opts.prefix !== undefined) query.set("prefix", opts.prefix);
+		return this.transport.request<HttpFilesListResult>({
 			method: "GET",
 			path: `/burrows/${encodeURIComponent(burrowId)}/files`,
 			query,

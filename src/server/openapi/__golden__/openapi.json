@@ -657,6 +657,22 @@
         ],
         "additionalProperties": false
       },
+      "ListFilesResponse": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WorkspaceFileEntry"
+            },
+            "description": "Recursive listing of workspace files, sorted by `path` ascending. Top-level reserved entries (`.git/`, `.gitconfig.burrow`) are excluded so the listing reflects the agent-visible surface. Symlinks inside the workspace are listed but not traversed."
+          }
+        },
+        "required": [
+          "files"
+        ],
+        "additionalProperties": false
+      },
       "Message": {
         "type": "object",
         "properties": {
@@ -975,6 +991,33 @@
         "required": [
           "path",
           "contents"
+        ],
+        "additionalProperties": false
+      },
+      "WorkspaceFileEntry": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Workspace-relative path, forward-slash separated. Relative to the workspace root regardless of any `prefix` filter."
+          },
+          "mode": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991,
+            "description": "Raw `st_mode` from `lstat` — includes file-type bits per stat(2). Mask with `0o170000` to read the type, `0o7777` for permission bits."
+          },
+          "size": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991,
+            "description": "Byte size from `lstat`. For symlinks this is the link's own length, not the target's."
+          }
+        },
+        "required": [
+          "path",
+          "mode",
+          "size"
         ],
         "additionalProperties": false
       },
@@ -1547,8 +1590,8 @@
         }
       },
       "get": {
-        "operationId": "readFile",
-        "summary": "Read a single file from a burrow's workspace (R-07). Same path-validation contract as `POST /burrows/{id}/files` — workspace-relative only, no traversal or symlink escapes. Used by orchestrators (e.g. warren) to reap mulch records and other run outputs back over the wire.",
+        "operationId": "readOrListFiles",
+        "summary": "Read one file or list the workspace (R-07, burrow-18ca). With `?path=`, returns a single `WorkspaceFile` decoded per `encoding` (UTF-8 by default; `base64` for binary). Without `?path=`, returns a recursive `ListFilesResponse` rooted at the workspace; `?prefix=relative/dir` scopes the walk to a subtree. Same path-validation contract as `POST /burrows/{id}/files` — workspace-relative only, no `..` or symlink escapes, reserved entries (`.git/`, `.gitconfig.burrow`) are rejected as a prefix and excluded from the top-level listing. Symlinks inside the workspace are listed but not traversed. Used by orchestrators (e.g. warren) to enumerate agent-controlled outputs (mulch records, seed updates) when filenames can't be predicted up front.",
         "tags": [
           "burrows"
         ],
@@ -1570,23 +1613,50 @@
               "type": "string",
               "minLength": 1
             },
-            "required": true,
-            "description": "Workspace-relative path of the file to read."
+            "description": "Workspace-relative path of a single file to read. Mutually exclusive with `prefix` — when both are present, `path` wins."
+          },
+          {
+            "name": "prefix",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "Workspace-relative directory to scope the listing to. Ignored when `path` is set. Omit for a whole-workspace walk."
+          },
+          {
+            "name": "encoding",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "utf-8",
+                "base64"
+              ]
+            },
+            "description": "Encoding for the read body when `path` is set. `utf-8` (default) decodes to a UTF-8 string; `base64` returns base64-encoded bytes for binary payloads. Ignored on the listing path."
           }
         ],
         "responses": {
           "200": {
-            "description": "The file. `contents` is decoded per `encoding` (UTF-8 by default; `base64` for binary).",
+            "description": "Either the requested file (when `?path=` is set) or a recursive listing of workspace files (no `?path=`).",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/WorkspaceFile"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/WorkspaceFile"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ListFilesResponse"
+                    }
+                  ]
                 }
               }
             }
           },
           "400": {
-            "description": "Error envelope (`validation_error on bad path`).",
+            "description": "Error envelope (`validation_error on bad path or prefix`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -1596,7 +1666,7 @@
             }
           },
           "404": {
-            "description": "Error envelope (`not_found (burrow or file)`).",
+            "description": "Error envelope (`not_found (burrow, file, or prefix)`).",
             "content": {
               "application/json": {
                 "schema": {

@@ -303,6 +303,41 @@ export const WriteFilesResponseSchema = component(
 	}),
 );
 
+export const WorkspaceFileEntrySchema = component(
+	"WorkspaceFileEntry",
+	z.object({
+		path: z
+			.string()
+			.describe(
+				"Workspace-relative path, forward-slash separated. Relative to the workspace root regardless of any `prefix` filter.",
+			),
+		mode: z
+			.number()
+			.int()
+			.describe(
+				"Raw `st_mode` from `lstat` — includes file-type bits per stat(2). Mask with `0o170000` to read the type, `0o7777` for permission bits.",
+			),
+		size: z
+			.number()
+			.int()
+			.nonnegative()
+			.describe(
+				"Byte size from `lstat`. For symlinks this is the link's own length, not the target's.",
+			),
+	}),
+);
+
+export const ListFilesResponseSchema = component(
+	"ListFilesResponse",
+	z.object({
+		files: z
+			.array(WorkspaceFileEntrySchema)
+			.describe(
+				"Recursive listing of workspace files, sorted by `path` ascending. Top-level reserved entries (`.git/`, `.gitconfig.burrow`) are excluded so the listing reflects the agent-visible surface. Symlinks inside the workspace are listed but not traversed.",
+			),
+	}),
+);
+
 export const CreateBurrowBodySchema = component(
 	"CreateBurrowBody",
 	z.object({

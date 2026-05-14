@@ -186,6 +186,8 @@ export {
 	HttpEventsClient,
 	type HttpEventTailFilter,
 	HttpFilesClient,
+	type HttpFilesListOptions,
+	type HttpFilesListResult,
 	type HttpFilesReadOptions,
 	type HttpFilesWriteResult,
 	HttpInboxClient,
@@ -197,6 +199,7 @@ export {
 	HttpRunsClient,
 	type HttpWorkspaceFile,
 	type HttpWorkspaceFileEncoding,
+	type HttpWorkspaceFileEntry,
 	type HttpWorkspaceFileOutput,
 } from "./lib/http-client.ts";
 export { createLogger, type Logger } from "./logging/logger.ts";

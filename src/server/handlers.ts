@@ -49,6 +49,7 @@ import type { AgentRuntime, InstallCheckResult } from "../runtime/runtime.ts";
 import { jsonResponse, ndjsonResponse } from "./response.ts";
 import type { RouteContext, RouteHandler } from "./types.ts";
 import {
+	listWorkspaceFiles,
 	readWorkspaceFile,
 	type WorkspaceFileEncoding,
 	type WorkspaceFileInput,
@@ -349,26 +350,39 @@ function writeFilesHandler(client: Client): RouteHandler {
 }
 
 /**
- * `GET /burrows/:id/files?path=…&encoding=…` — read one file from a
- * burrow's workspace. Same path-validation contract as `writeFiles`. Used
- * by orchestrators (e.g. warren) to reap mulch records and other run
- * outputs back over the wire. Default encoding is `utf-8`; pass
- * `encoding=base64` for binary payloads.
+ * `GET /burrows/:id/files` — overloaded on the query string:
+ *
+ *   - `?path=…[&encoding=…]` reads ONE file from the burrow's workspace.
+ *     Same path-validation contract as `writeFiles`. Default encoding is
+ *     `utf-8`; pass `encoding=base64` for binary payloads.
+ *   - No `?path=` returns a recursive listing `{ files: [{ path, mode, size
+ *     }] }` rooted at the workspace; optional `?prefix=relative/dir` scopes
+ *     the walk to a subtree. Reserved entries (`.git/`, `.gitconfig.burrow`)
+ *     are excluded from the top-level walk so the listing reflects the
+ *     agent-visible surface, not burrow's bookkeeping. Symlinks inside the
+ *     workspace are listed but not followed.
+ *
+ * Used by orchestrators (e.g. warren) to reap mulch records and other run
+ * outputs back over the wire when filenames are agent-controlled and can't
+ * be enumerated up front.
  */
 function readFileHandler(client: Client): RouteHandler {
 	return async (ctx) => {
 		const id = requireParam(ctx, "id");
 		const burrow = client.burrows.get(id);
 		const path = ctx.url.searchParams.get("path");
-		if (path === null || path.length === 0) {
-			throw new ValidationError("query param 'path' is required");
+		if (path !== null && path.length > 0) {
+			const encodingRaw = ctx.url.searchParams.get("encoding");
+			const encoding =
+				parseEnum<WorkspaceFileEncoding>(encodingRaw, "encoding", WORKSPACE_FILE_ENCODINGS) ??
+				"utf-8";
+			const file = await readWorkspaceFile(burrow.workspacePath, path, encoding);
+			return jsonResponse(200, file);
 		}
-		const encodingRaw = ctx.url.searchParams.get("encoding");
-		const encoding =
-			parseEnum<WorkspaceFileEncoding>(encodingRaw, "encoding", WORKSPACE_FILE_ENCODINGS) ??
-			"utf-8";
-		const file = await readWorkspaceFile(burrow.workspacePath, path, encoding);
-		return jsonResponse(200, file);
+		const prefixRaw = ctx.url.searchParams.get("prefix");
+		const prefix = prefixRaw !== null && prefixRaw.length > 0 ? prefixRaw : undefined;
+		const files = await listWorkspaceFiles(burrow.workspacePath, prefix);
+		return jsonResponse(200, { files });
 	};
 }
 

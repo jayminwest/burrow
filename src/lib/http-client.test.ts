@@ -380,6 +380,77 @@ describe("HttpClient (TCP transport)", () => {
 		).rejects.toBeInstanceOf(NotFoundError);
 	});
 
+	test("files.list returns recursive workspace entries", async () => {
+		const ws = mkTmp("burrow-httpclient-ws-");
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/tmp/proj",
+			workspacePath: ws,
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		await mkdir(join(ws, ".mulch", "expertise"), { recursive: true });
+		await writeFile(join(ws, ".mulch/expertise/a.jsonl"), "row\n");
+		await writeFile(join(ws, "top.txt"), "hi");
+		const result = await http.files.list(burrow.id);
+		expect(result.files.map((f) => f.path)).toEqual([".mulch/expertise/a.jsonl", "top.txt"]);
+		const a = result.files.find((f) => f.path === ".mulch/expertise/a.jsonl");
+		expect(a?.size).toBe(4);
+		expect(typeof a?.mode).toBe("number");
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("files.list with prefix scopes the walk", async () => {
+		const ws = mkTmp("burrow-httpclient-ws-");
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/tmp/proj",
+			workspacePath: ws,
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		await mkdir(join(ws, ".mulch", "expertise"), { recursive: true });
+		await writeFile(join(ws, ".mulch/expertise/a.jsonl"), "x");
+		await writeFile(join(ws, "other.txt"), "ignored");
+		const result = await http.files.list(burrow.id, { prefix: ".mulch/expertise" });
+		expect(result.files.map((f) => f.path)).toEqual([".mulch/expertise/a.jsonl"]);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("files.list rehydrates ValidationError on bad prefix", async () => {
+		const ws = mkTmp("burrow-httpclient-ws-");
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/tmp/proj",
+			workspacePath: ws,
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		await expect(http.files.list(burrow.id, { prefix: ".." })).rejects.toBeInstanceOf(
+			ValidationError,
+		);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
+	test("files.list rehydrates NotFoundError on missing prefix dir", async () => {
+		const ws = mkTmp("burrow-httpclient-ws-");
+		const burrow = client.repos.burrows.create({
+			kind: "project",
+			projectRoot: "/tmp/proj",
+			workspacePath: ws,
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		await expect(http.files.list(burrow.id, { prefix: "does/not/exist" })).rejects.toBeInstanceOf(
+			NotFoundError,
+		);
+		rmSync(ws, { recursive: true, force: true });
+	});
+
 	/* ------------------------------------------------------------------- */
 	/* Runs                                                                */
 	/* ------------------------------------------------------------------- */

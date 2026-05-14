@@ -29,10 +29,12 @@ import {
 	ErrorEnvelopeSchema,
 	EventEnvelopeSchema,
 	HealthResponseSchema,
+	ListFilesResponseSchema,
 	MessageSchema,
 	QueryEnums,
 	RunSchema,
 	SendInboxBodySchema,
+	WorkspaceFileEntrySchema,
 	WorkspaceFileSchema,
 	WriteFilesBodySchema,
 	WriteFilesResponseSchema,
@@ -66,6 +68,8 @@ interface ResponseDef {
 	schemaName?: string;
 	itemSchemaName?: string;
 	isArray?: boolean;
+	/** Render the response schema as `{ oneOf: [...] }` over the named components. */
+	oneOfSchemaNames?: readonly string[];
 }
 
 /* ----------------------------------------------------------------------- */
@@ -361,29 +365,43 @@ const OPERATIONS: readonly PathOperation[] = [
 		method: "get",
 		pattern: "/burrows/{id}/files",
 		op: {
-			operationId: "readFile",
+			operationId: "readOrListFiles",
 			summary:
-				"Read a single file from a burrow's workspace (R-07). Same path-validation contract as `POST /burrows/{id}/files` — workspace-relative only, no traversal or symlink escapes. Used by orchestrators (e.g. warren) to reap mulch records and other run outputs back over the wire.",
+				"Read one file or list the workspace (R-07, burrow-18ca). With `?path=`, returns a single `WorkspaceFile` decoded per `encoding` (UTF-8 by default; `base64` for binary). Without `?path=`, returns a recursive `ListFilesResponse` rooted at the workspace; `?prefix=relative/dir` scopes the walk to a subtree. Same path-validation contract as `POST /burrows/{id}/files` — workspace-relative only, no `..` or symlink escapes, reserved entries (`.git/`, `.gitconfig.burrow`) are rejected as a prefix and excluded from the top-level listing. Symlinks inside the workspace are listed but not traversed. Used by orchestrators (e.g. warren) to enumerate agent-controlled outputs (mulch records, seed updates) when filenames can't be predicted up front.",
 			tags: ["burrows"],
 			parameters: [
 				burrowIdParam,
 				{
 					name: "path",
 					in: "query",
-					required: true,
-					description: "Workspace-relative path of the file to read.",
+					description:
+						"Workspace-relative path of a single file to read. Mutually exclusive with `prefix` — when both are present, `path` wins.",
 					schema: { type: "string", minLength: 1 },
+				},
+				{
+					name: "prefix",
+					in: "query",
+					description:
+						"Workspace-relative directory to scope the listing to. Ignored when `path` is set. Omit for a whole-workspace walk.",
+					schema: { type: "string", minLength: 1 },
+				},
+				{
+					name: "encoding",
+					in: "query",
+					description:
+						"Encoding for the read body when `path` is set. `utf-8` (default) decodes to a UTF-8 string; `base64` returns base64-encoded bytes for binary payloads. Ignored on the listing path.",
+					schema: { type: "string", enum: ["utf-8", "base64"] },
 				},
 			],
 			responses: {
 				"200": {
 					description:
-						"The file. `contents` is decoded per `encoding` (UTF-8 by default; `base64` for binary).",
+						"Either the requested file (when `?path=` is set) or a recursive listing of workspace files (no `?path=`).",
 					contentType: "application/json",
-					schemaName: "WorkspaceFile",
+					oneOfSchemaNames: ["WorkspaceFile", "ListFilesResponse"],
 				},
-				"400": errorResponse("validation_error on bad path"),
-				"404": errorResponse("not_found (burrow or file)"),
+				"400": errorResponse("validation_error on bad path or prefix"),
+				"404": errorResponse("not_found (burrow, file, or prefix)"),
 			},
 		},
 	},
@@ -794,8 +812,10 @@ function registrySources(): readonly z.ZodType[] {
 		CancelRunBodySchema,
 		SendInboxBodySchema,
 		WorkspaceFileSchema,
+		WorkspaceFileEntrySchema,
 		WriteFilesBodySchema,
 		WriteFilesResponseSchema,
+		ListFilesResponseSchema,
 		DrainBodySchema,
 		DrainStateSchema,
 	];
@@ -853,14 +873,21 @@ function renderParameter(p: ParameterDef): Record<string, unknown> {
 function renderResponse(def: ResponseDef): Record<string, unknown> {
 	const out: Record<string, unknown> = { description: def.description };
 	if (!def.contentType) return out;
-	const schema = def.isArray
-		? {
-				type: "array",
-				items: def.itemSchemaName ? { $ref: `${COMPONENT_REF_BASE}/${def.itemSchemaName}` } : {},
-			}
-		: def.schemaName
-			? { $ref: `${COMPONENT_REF_BASE}/${def.schemaName}` }
-			: { type: "object" };
+	let schema: Record<string, unknown>;
+	if (def.oneOfSchemaNames && def.oneOfSchemaNames.length > 0) {
+		schema = {
+			oneOf: def.oneOfSchemaNames.map((name) => ({ $ref: `${COMPONENT_REF_BASE}/${name}` })),
+		};
+	} else if (def.isArray) {
+		schema = {
+			type: "array",
+			items: def.itemSchemaName ? { $ref: `${COMPONENT_REF_BASE}/${def.itemSchemaName}` } : {},
+		};
+	} else if (def.schemaName) {
+		schema = { $ref: `${COMPONENT_REF_BASE}/${def.schemaName}` };
+	} else {
+		schema = { type: "object" };
+	}
 	out.content = { [def.contentType]: { schema } };
 	return out;
 }

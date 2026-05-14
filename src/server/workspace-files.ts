@@ -21,10 +21,10 @@
  */
 
 import { constants as FS } from "node:fs";
-import { mkdir, open, readFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { lstat, mkdir, open, readdir, readFile, realpath } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import { NotFoundError, ValidationError } from "../core/errors.ts";
-import { resolveWorkspaceFilePath } from "./workspace-paths.ts";
+import { RESERVED_WORKSPACE_ENTRIES, resolveWorkspaceFilePath } from "./workspace-paths.ts";
 
 export type WorkspaceFileEncoding = "utf-8" | "base64";
 
@@ -39,6 +39,15 @@ export interface WorkspaceFileOutput {
 	path: string;
 	contents: string;
 	encoding: WorkspaceFileEncoding;
+}
+
+export interface WorkspaceFileEntry {
+	/** Workspace-relative path, forward-slash separated. */
+	path: string;
+	/** Raw `st_mode` (includes file-type bits per `stat(2)`). */
+	mode: number;
+	/** Byte size from `lstat`; for symlinks this is the link's own length. */
+	size: number;
 }
 
 const DEFAULT_FILE_MODE = 0o644;
@@ -86,6 +95,98 @@ export async function readWorkspaceFile(
 	}
 	const contents = encoding === "base64" ? bytes.toString("base64") : bytes.toString("utf8");
 	return { path: relPath, contents, encoding };
+}
+
+/**
+ * Recursively list every file (and dangling/in-workspace symlink) under the
+ * burrow's workspace. With no `prefix`, walks from `workspaceRoot` and skips
+ * the top-level reserved entries (`.git`, `.gitconfig.burrow`) so the listing
+ * is the agent-visible surface, not burrow's own bookkeeping. With a
+ * `prefix`, scopes the walk to that subtree after running it through
+ * `resolveWorkspaceFilePath` — same validation as `files.read`, so `..`,
+ * absolute paths, reserved-entry escapes, and symlink escapes all reject 400
+ * before any directory read.
+ *
+ * Symlinks inside the workspace are listed but never traversed: the entry
+ * appears once with `lstat`-derived `mode`/`size`, and the walk does NOT
+ * recurse through the link target. Callers that want the linked file's
+ * bytes go through `files.read`, which re-validates via the same
+ * `resolveWorkspaceFilePath` guard.
+ *
+ * The result is sorted by `path` ascending so callers get deterministic
+ * ordering across runs (matches the test golden + makes warren's mulch_merge
+ * diff cleaner).
+ */
+export async function listWorkspaceFiles(
+	workspaceRoot: string,
+	prefix?: string,
+): Promise<WorkspaceFileEntry[]> {
+	let rootReal: string;
+	try {
+		rootReal = await realpath(workspaceRoot);
+	} catch (err) {
+		throw new ValidationError(`workspace root '${workspaceRoot}' is not accessible`, {
+			cause: err,
+		});
+	}
+
+	const hasPrefix = prefix !== undefined && prefix.length > 0;
+	let startDir = rootReal;
+	let prefixRel = "";
+	if (hasPrefix) {
+		// biome-ignore lint/style/noNonNullAssertion: hasPrefix guarantees prefix is defined
+		const canonical = await resolveWorkspaceFilePath(workspaceRoot, prefix!);
+		startDir = canonical;
+		prefixRel = canonical === rootReal ? "" : canonical.slice(rootReal.length + 1);
+	}
+
+	let dirStats: Awaited<ReturnType<typeof lstat>>;
+	try {
+		dirStats = await lstat(startDir);
+	} catch (err) {
+		if (isENOENT(err)) {
+			throw new NotFoundError(
+				hasPrefix
+					? `prefix '${prefix}' not found in workspace`
+					: `workspace root not found at '${workspaceRoot}'`,
+			);
+		}
+		throw err;
+	}
+	if (!dirStats.isDirectory()) {
+		throw new ValidationError(`prefix '${prefix}' is not a directory`);
+	}
+
+	const entries: WorkspaceFileEntry[] = [];
+	await walkWorkspaceDirectory(startDir, prefixRel, entries, !hasPrefix);
+	entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+	return entries;
+}
+
+async function walkWorkspaceDirectory(
+	dir: string,
+	relPath: string,
+	out: WorkspaceFileEntry[],
+	isWorkspaceRoot: boolean,
+): Promise<void> {
+	const dirEntries = await readdir(dir, { withFileTypes: true });
+	for (const entry of dirEntries) {
+		if (isWorkspaceRoot && RESERVED_WORKSPACE_ENTRIES.includes(entry.name)) continue;
+		const absChild = join(dir, entry.name);
+		const childRel = relPath.length === 0 ? entry.name : `${relPath}/${entry.name}`;
+		const stats = await lstat(absChild);
+		if (stats.isSymbolicLink()) {
+			out.push({ path: childRel, mode: stats.mode, size: stats.size });
+			continue;
+		}
+		if (stats.isDirectory()) {
+			await walkWorkspaceDirectory(absChild, childRel, out, false);
+			continue;
+		}
+		if (stats.isFile()) {
+			out.push({ path: childRel, mode: stats.mode, size: stats.size });
+		}
+	}
 }
 
 function decodeContents(file: WorkspaceFileInput, index: number): Uint8Array {
