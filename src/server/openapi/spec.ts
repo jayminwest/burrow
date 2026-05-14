@@ -24,6 +24,8 @@ import {
 	componentRegistry,
 	DashboardSnapshotSchema,
 	DestroyBurrowResultSchema,
+	DrainBodySchema,
+	DrainStateSchema,
 	ErrorEnvelopeSchema,
 	EventEnvelopeSchema,
 	HealthResponseSchema,
@@ -247,6 +249,9 @@ const OPERATIONS: readonly PathOperation[] = [
 					schemaName: "Burrow",
 				},
 				"400": errorResponse("validation_error"),
+				"503": errorResponse(
+					"worker_draining — POST /admin/drain has set this worker's drain bit; retry against another worker or flip drain off to resume",
+				),
 			},
 		},
 	},
@@ -417,6 +422,9 @@ const OPERATIONS: readonly PathOperation[] = [
 				},
 				"400": errorResponse("validation_error"),
 				"404": errorResponse("not_found"),
+				"503": errorResponse(
+					"worker_draining — POST /admin/drain has set this worker's drain bit; retry against another worker or flip drain off to resume",
+				),
 			},
 		},
 	},
@@ -659,6 +667,27 @@ const OPERATIONS: readonly PathOperation[] = [
 			},
 		},
 	},
+	{
+		method: "post",
+		pattern: "/admin/drain",
+		op: {
+			operationId: "drainWorker",
+			summary:
+				"Flip the worker's drain bit (pl-cb3e step 4 / burrow-79ad). While drain is set, `POST /burrows` and `POST /burrows/:id/runs` return 503 `worker_draining`; reads, lifecycle (cancel/stop/resume/delete), inbox sends, and every streaming surface keep working so operators can still observe and tear down in-flight work. In-flight runs continue to terminal state — drain is graceful, not preemptive. Idempotent: setting drain to its current value still returns 200 with the same echo. Mounted only when the server is booted with admin controls (i.e. by `burrow serve`); absent in library-mode embeds.",
+			tags: ["admin"],
+			requestBody: { schemaName: "DrainBody" },
+			responses: {
+				"200": {
+					description: "Echo of the dispatcher's drain bit after the request.",
+					contentType: "application/json",
+					schemaName: "DrainState",
+				},
+				"400": errorResponse(
+					"validation_error — empty body, non-object body, or 'drain' not a JSON boolean",
+				),
+			},
+		},
+	},
 ];
 
 function errorResponse(label: string): ResponseDef {
@@ -688,7 +717,7 @@ export function buildOpenApiDocument(opts: { version?: string } = {}): OpenApiDo
 			title: "burrow serve",
 			version,
 			description:
-				"HTTP API for the burrow runtime. Routes mirror the in-process `Client` namespaces 1:1 so the Library API stays the source of truth. Streaming surfaces (`/burrows/{id}/events`, `/runs/{id}/stream`, `/watch`) emit NDJSON over chunked HTTP byte-for-byte equal to the matching `--json` CLI output.",
+				"HTTP API for the burrow runtime. Routes mirror the in-process `Client` namespaces 1:1 so the Library API stays the source of truth. Streaming surfaces (`/burrows/{id}/events`, `/runs/{id}/stream`, `/watch`) emit NDJSON over chunked HTTP byte-for-byte equal to the matching `--json` CLI output.\n\nBind-host posture: `burrow serve` defaults to `127.0.0.1` (loopback) and refuses to start with a non-loopback `--bind-host` when `--no-auth` is set — exposing the API over TCP requires `BURROW_API_TOKEN`. The threat model is VPC-private (Tailscale / AWS VPC / Fly private network); TLS is the operator's job at a reverse proxy on each worker. mTLS is a future R-NN, not V1. Multi-worker pools coordinate quiescence via `POST /admin/drain` (see the `admin` tag).",
 			license: { name: "MIT" },
 		},
 		servers: [
@@ -718,6 +747,11 @@ export function buildOpenApiDocument(opts: { version?: string } = {}): OpenApiDo
 			{ name: "agents", description: "Agents namespace (SPEC §15.5)." },
 			{ name: "dashboard", description: "Dashboard view-model (SPEC §26)." },
 			{ name: "streams", description: "NDJSON-over-chunked-HTTP surfaces." },
+			{
+				name: "admin",
+				description:
+					"Operator-facing endpoints for worker lifecycle (drain, future cache/telemetry pulls). Mounted only when the server is booted with admin controls.",
+			},
 		],
 		paths,
 	};
@@ -762,6 +796,8 @@ function registrySources(): readonly z.ZodType[] {
 		WorkspaceFileSchema,
 		WriteFilesBodySchema,
 		WriteFilesResponseSchema,
+		DrainBodySchema,
+		DrainStateSchema,
 	];
 }
 

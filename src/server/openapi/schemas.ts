@@ -356,6 +356,32 @@ export const SendInboxBodySchema = component(
 );
 
 /* ----------------------------------------------------------------------- */
+/* Admin (pl-cb3e step 4 / burrow-79ad)                                     */
+/* ----------------------------------------------------------------------- */
+
+export const DrainBodySchema = component(
+	"DrainBody",
+	z.object({
+		drain: z
+			.boolean()
+			.describe(
+				"When true, mark the worker as draining: `POST /burrows` and `POST /burrows/:id/runs` return 503 `worker_draining`; in-flight runs and streams continue to terminal state. When false, restore acceptance. No string coercion — must be a JSON boolean.",
+			),
+	}),
+);
+
+export const DrainStateSchema = component(
+	"DrainState",
+	z.object({
+		drain: z
+			.boolean()
+			.describe(
+				"The dispatcher's drain bit after the request. Idempotent: setting drain to its current value still returns 200 with the same echo.",
+			),
+	}),
+);
+
+/* ----------------------------------------------------------------------- */
 /* Query parameter primitives (used by spec.ts for parameter authoring)     */
 /* ----------------------------------------------------------------------- */
 

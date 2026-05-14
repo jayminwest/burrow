@@ -113,4 +113,52 @@ describe("OpenAPI document (golden lock)", () => {
 		const b = serializeOpenApiDocument(buildOpenApiDocument({ version: "x" }));
 		expect(a).toBe(b);
 	});
+
+	test("POST /admin/drain is documented under the `admin` tag with DrainBody / DrainState refs (pl-cb3e step 5 / burrow-37c3)", () => {
+		const doc = buildOpenApiDocument() as {
+			paths: Record<
+				string,
+				Record<
+					string,
+					{
+						tags?: readonly string[];
+						requestBody?: {
+							content?: { "application/json"?: { schema?: { $ref?: string } } };
+						};
+						responses?: Record<
+							string,
+							{ content?: { "application/json"?: { schema?: { $ref?: string } } } }
+						>;
+					}
+				>
+			>;
+			tags: readonly { name: string }[];
+		};
+		const drain = doc.paths["/admin/drain"]?.post;
+		expect(drain).toBeDefined();
+		expect(drain?.tags).toEqual(["admin"]);
+		expect(drain?.requestBody?.content?.["application/json"]?.schema?.$ref).toBe(
+			"#/components/schemas/DrainBody",
+		);
+		expect(drain?.responses?.["200"]?.content?.["application/json"]?.schema?.$ref).toBe(
+			"#/components/schemas/DrainState",
+		);
+		expect(doc.tags.map((t) => t.name)).toContain("admin");
+	});
+
+	test("gated POSTs declare 503 worker_draining (pl-cb3e step 5 / burrow-37c3)", () => {
+		const doc = buildOpenApiDocument() as {
+			paths: Record<string, Record<string, { responses?: Record<string, unknown> }>>;
+		};
+		expect(doc.paths["/burrows"]?.post?.responses?.["503"]).toBeDefined();
+		expect(doc.paths["/burrows/{id}/runs"]?.post?.responses?.["503"]).toBeDefined();
+	});
+
+	test("info.description carries the bind-host posture note (pl-cb3e step 5 / burrow-37c3)", () => {
+		const doc = buildOpenApiDocument() as { info: { description: string } };
+		expect(doc.info.description).toContain("Bind-host posture");
+		expect(doc.info.description).toContain("127.0.0.1");
+		expect(doc.info.description).toContain("BURROW_API_TOKEN");
+		expect(doc.info.description).toContain("/admin/drain");
+	});
 });
