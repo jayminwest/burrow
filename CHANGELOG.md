@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-14
+
+Ships R-08 — the sandbox-side substrate for warren's per-run preview
+environments (`warren-83dc` / `pl-2c59`). `SandboxProfile` gains
+`inboundPortForwards` so a burrow can declare host→sandbox loopback
+forwards at provision time, and a new `/burrows/:id/sidecars` HTTP
+namespace lets warren (or any external orchestrator) spawn long-lived
+non-agent processes — `bun run dev`, `vite preview`, a Postgres — inside
+the burrow's existing sandbox profile, separately from agent runs.
+
+### Added
+
+- **`feat(sandbox)`** — `SandboxProfile.inboundPortForwards?: [{hostPort,
+  sandboxPort}]` (`src/provider/types.ts`) declares per-burrow loopback
+  forwards. Linux implements them via a per-connection forwarder using
+  `nsenter --net=/proc/<pid>/ns/net -- nc`
+  (`src/provider/local/inbound-forward.ts`); macOS is a no-op
+  (`host_port_bound: false`) since `sandbox-exec` doesn't ship a network
+  namespace. (`R-08`, `burrow-8647`)
+- **`feat(server)`** — `/burrows/:id/sidecars` HTTP namespace spawns
+  long-lived non-agent processes inside the burrow's sandbox profile:
+  `POST/GET /burrows/:id/sidecars`,
+  `GET/DELETE /burrows/:id/sidecars/:sidecarId`,
+  `GET /burrows/:id/sidecars/:sidecarId/logs`. Backed by an in-memory
+  `SidecarRegistry` (`src/server/sidecars.ts`) with a default per-burrow
+  cap of 4 (override via `BURROW_SIDECAR_CAP`); over-cap creates return
+  `409 sidecar_cap_exceeded`. OpenAPI golden updated. `burrow serve`
+  wires a registry by default; library-mode embeds opt out and sidecar
+  routes 404 with the `sidecars are not enabled` hint. (`R-08`,
+  `burrow-8647`)
+- **`feat(client)`** — `HttpClient.sidecars` namespace mirrors the wire
+  surface; errors rehydrate as `NotFoundError` / `ValidationError` /
+  `HttpClientError(sidecar_cap_exceeded)` so consumers can `instanceof`-
+  check across transports. (`burrow-8647`)
+
+### Changed
+
+- **`DELETE /burrows/:id` cascades sidecar teardown.** The handler now
+  funnels through `SidecarRegistry.cascadeDeleteBurrow` before the row
+  is marked destroyed, enforcing the SPEC §8.7 cleanup invariant that
+  no sidecar can outlive its parent burrow. (`burrow-8647`)
+- **`docs(claude)`** — Refreshed Mulch onboarding section in CLAUDE.md
+  to v0.10.0 (manifest prime mode, soft archive workflow).
+- **`docs(changelog)`** — Split prior 0.3.0 roadmap entries to align
+  with the underlying commit history (`burrow-a581`).
+
 ## [0.3.0] - 2026-05-13
 
 Lands the burrow-side substrate for remote workers (plan `pl-cb3e`,
@@ -637,7 +683,10 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.2.11...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/jayminwest/burrow/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/jayminwest/burrow/compare/v0.2.12...v0.3.0
+[0.2.12]: https://github.com/jayminwest/burrow/compare/v0.2.11...v0.2.12
 [0.2.11]: https://github.com/jayminwest/burrow/compare/v0.2.10...v0.2.11
 [0.2.10]: https://github.com/jayminwest/burrow/compare/v0.2.9...v0.2.10
 [0.2.9]: https://github.com/jayminwest/burrow/compare/v0.2.8...v0.2.9
