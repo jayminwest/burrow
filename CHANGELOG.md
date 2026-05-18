@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-05-18
+
+Widens `AgentRuntime.envPassthrough` to a function form so the `pi`
+runtime can pick the right provider API-key envvar at spawn time —
+keyed off `frontmatter.provider` from the run's metadata. Without
+this, a `pi` run frontmatter-pinned to a non-anthropic provider
+(openai, gemini, groq, etc.) authenticated against an empty env
+inside the sandbox even when the user had the matching `*_API_KEY`
+exported on the host. Built-in static-array runtimes (`claude-code`,
+`sapling`, `codex`) are unaffected — the widening is additive.
+(`burrow-6f3f`)
+
+### Fixed
+
+- **`fix(runtime)`** — `AgentRuntime.envPassthrough` now accepts
+  `readonly string[] | ((ctx) => readonly string[])`. `piRuntime`
+  ships the function form: anthropic triple as the base, plus the
+  matching key from `PI_PROVIDER_ENV_KEYS` (`openai →
+  OPENAI_API_KEY`, `gemini → GEMINI_API_KEY`, `google →
+  GOOGLE_API_KEY`, `groq → GROQ_API_KEY`, `mistral →
+  MISTRAL_API_KEY`, `deepseek → DEEPSEEK_API_KEY`). `runUpCommand`
+  bakes the base set into `SandboxProfile.envPassthrough` (still
+  gated on `forwardCredentials`); the dispatcher's new
+  `applyRuntimeEnvPassthrough` re-invokes the function with the
+  run's `frontmatter` and unions the delta onto a per-spawn profile
+  copy. (`burrow-6f3f`)
+
 ## [0.3.2] - 2026-05-18
 
 Closes the `body.env` gap on `POST /burrows` so external orchestrators
@@ -712,7 +739,9 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.3.3...HEAD
+[0.3.3]: https://github.com/jayminwest/burrow/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/jayminwest/burrow/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/jayminwest/burrow/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/jayminwest/burrow/compare/v0.2.12...v0.3.0
 [0.2.12]: https://github.com/jayminwest/burrow/compare/v0.2.11...v0.2.12
