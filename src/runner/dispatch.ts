@@ -138,22 +138,32 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		...(frontmatter ? { frontmatter } : {}),
 	});
 
+	// Function-form `envPassthrough` (burrow-6f3f): re-resolve with the
+	// run's actual frontmatter so a runtime that multiplexes over providers
+	// (e.g. pi --provider <name>) can opt the matching provider key into
+	// passthrough per-run. The base names landed on `profile.envPassthrough`
+	// at `burrow up` time via the same function called with an empty
+	// frontmatter — that path also gates on per-agent
+	// `forwardCredentials = false`, so an agent that opted out has no base
+	// names in `profile.envPassthrough` here and we still skip the union.
+	const dispatchProfile = applyRuntimeEnvPassthrough(profile, runtime, frontmatter);
+
 	const spawn = input.spawn ?? runSandboxed;
 	const startProxyFn = input.startProxy ?? startProxy;
 
 	const useStdinHold = runtime.shouldCloseStdinOnEvent !== undefined;
 
 	let proxy: ProxyHandle | null = null;
-	let runProfile: SandboxProfile = profile;
+	let runProfile: SandboxProfile = dispatchProfile;
 	let runCommand: SpawnCommand = useStdinHold ? { ...command, holdStdin: true } : command;
-	if (profile.network === "restricted") {
+	if (dispatchProfile.network === "restricted") {
 		try {
-			proxy = await startProxyFn({ allowedDomains: profile.allowedDomains });
+			proxy = await startProxyFn({ allowedDomains: dispatchProfile.allowedDomains });
 		} catch (err) {
 			const message = err instanceof Error ? err.message : String(err);
 			return { state: "failed", errorMessage: `failed to start network proxy: ${message}` };
 		}
-		runProfile = { ...profile, proxyAddress: { host: "127.0.0.1", port: proxy.port } };
+		runProfile = { ...dispatchProfile, proxyAddress: { host: "127.0.0.1", port: proxy.port } };
 		runCommand = {
 			...command,
 			env: {
@@ -404,6 +414,39 @@ function sleepUntil(ms: number, signal: AbortSignal): Promise<void> {
 		};
 		signal.addEventListener("abort", onAbort, { once: true });
 	});
+}
+
+/**
+ * Apply the function-form `AgentRuntime.envPassthrough` contract (burrow-6f3f)
+ * to a per-spawn profile copy. Runtimes that declare a static array already
+ * had their names baked into `profile.envPassthrough` at `burrow up` time;
+ * function-form runtimes get re-resolved here with the run's actual
+ * frontmatter so a provider override (e.g. `frontmatter.provider = "openai"`
+ * for pi) folds the matching provider key into passthrough. The union is
+ * deduped against the existing profile names so the static-form contribution
+ * (the base set baked at up time) doesn't double-up. When the function
+ * contributes no new names (static-form runtimes, identity case, base
+ * already covered) the original profile is returned by reference — saves a
+ * spread + array copy for the common no-override path.
+ */
+function applyRuntimeEnvPassthrough(
+	profile: SandboxProfile,
+	runtime: AgentRuntime,
+	frontmatter: AgentFrontmatter | undefined,
+): SandboxProfile {
+	const passthrough = runtime.envPassthrough;
+	if (typeof passthrough !== "function") return profile;
+	const resolved = passthrough({ ...(frontmatter ? { frontmatter } : {}) });
+	if (resolved.length === 0) return profile;
+	const existing = new Set(profile.envPassthrough);
+	const additions: string[] = [];
+	for (const name of resolved) {
+		if (name.length === 0 || existing.has(name)) continue;
+		existing.add(name);
+		additions.push(name);
+	}
+	if (additions.length === 0) return profile;
+	return { ...profile, envPassthrough: [...profile.envPassthrough, ...additions] };
 }
 
 /**

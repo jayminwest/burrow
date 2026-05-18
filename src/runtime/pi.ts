@@ -83,6 +83,7 @@ import { parsePiEvents } from "./parsers/pi.ts";
 import type {
 	AgentFrontmatter,
 	AgentRuntime,
+	EnvPassthroughContext,
 	ExtractMetadataContext,
 	InstallCheckResult,
 	ParseContext,
@@ -145,19 +146,22 @@ export const PI_FORCED_ARGV: readonly string[] = [
 ] as const;
 
 /**
- * Host env vars the `pi` CLI consults at startup. Forwarded into the
- * sandbox via `SandboxProfile.envPassthrough` so a project with no
- * `burrow.toml [env]` block still authenticates when `ANTHROPIC_API_KEY`
- * (or its siblings) is set in the burrow process env. Aligned with
- * `claude-code` minus the `CLAUDE_CODE_OAUTH_TOKEN` flavor since pi's
- * OAuth path is keyed off `~/.pi/agent/auth.json` (not bind-mounted into
- * the sandbox), not an env var.
+ * Host env vars the `pi` CLI consults at startup for the default
+ * (anthropic) provider. Forwarded into the sandbox via
+ * `SandboxProfile.envPassthrough` so a project with no `burrow.toml [env]`
+ * block still authenticates when `ANTHROPIC_API_KEY` (or its siblings) is
+ * set in the burrow process env. Aligned with `claude-code` minus the
+ * `CLAUDE_CODE_OAUTH_TOKEN` flavor since pi's OAuth path is keyed off
+ * `~/.pi/agent/auth.json` (not bind-mounted into the sandbox), not an env
+ * var.
  *
- * Non-anthropic provider keys (`GEMINI_API_KEY`, `OPENAI_API_KEY`, ...)
- * are intentionally NOT in this list — argv pins `--provider anthropic`,
- * so forwarding them would leak host secrets into a sandbox that can't
- * use them. Projects that override the provider via `burrow.toml [env]`
- * passthrough opt in per-project (mx-d46d5d).
+ * This is the *base* set — the conditional passthrough function
+ * `piEnvPassthrough` returns these names regardless of the
+ * `frontmatter.provider` override, so a run that flips back to anthropic
+ * mid-burrow keeps the same auth surface. The runtime's full envPassthrough
+ * (provider-key delta on top of the base) is computed by `piEnvPassthrough`
+ * and resolved at both `burrow up` time (base only) and dispatch time
+ * (base + matching provider key — burrow-6f3f).
  */
 export const PI_ENV_PASSTHROUGH: readonly string[] = [
 	"ANTHROPIC_API_KEY",
@@ -165,11 +169,54 @@ export const PI_ENV_PASSTHROUGH: readonly string[] = [
 	"ANTHROPIC_BASE_URL",
 ] as const;
 
+/**
+ * Per-provider env keys forwarded *in addition to* the anthropic base when
+ * `frontmatter.provider` selects a non-anthropic pi provider (burrow-6f3f).
+ * Mirrors warren's multi-provider surface (warren-f8c0, pl-4374) — the
+ * argv path in `buildPiArgv` already substitutes `--provider <name>`, this
+ * map is the missing env half so the sandboxed pi can authenticate against
+ * the chosen provider.
+ *
+ * One key per provider name. A project that needs an alternate key flavor
+ * (e.g. `GOOGLE_API_KEY` for gemini, or a per-provider base URL) still
+ * declares it in `burrow.toml [env]` passthrough — this map only encodes
+ * the canonical key for each pi `--provider` value. Provider names are
+ * matched case-insensitively to match warren's lowercase normalization on
+ * the schema side (warren `src/registry/schema.ts:93`).
+ */
+export const PI_PROVIDER_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
+	openai: ["OPENAI_API_KEY"],
+	gemini: ["GEMINI_API_KEY"],
+	google: ["GOOGLE_API_KEY"],
+	groq: ["GROQ_API_KEY"],
+	mistral: ["MISTRAL_API_KEY"],
+	deepseek: ["DEEPSEEK_API_KEY"],
+};
+
+/**
+ * Resolve pi's effective env passthrough for a given run's frontmatter
+ * (burrow-6f3f). Always returns the anthropic base triple so the default
+ * (no-override) path is unchanged; if `frontmatter.provider` selects a
+ * non-anthropic, non-empty provider, the matching key from
+ * `PI_PROVIDER_ENV_KEYS` is appended. Unknown providers contribute nothing
+ * (the project can still opt in via `burrow.toml [env]` passthrough). Pure
+ * — `burrow up` invokes this with an empty frontmatter to bake the base
+ * into `SandboxProfile.envPassthrough`, the dispatcher re-invokes it with
+ * the run's frontmatter and unions the result onto the per-spawn profile.
+ */
+export function piEnvPassthrough(ctx: EnvPassthroughContext): readonly string[] {
+	const provider = nonEmpty(ctx.frontmatter?.provider)?.toLowerCase();
+	if (!provider || provider === PI_DEFAULT_PROVIDER) return PI_ENV_PASSTHROUGH;
+	const extra = PI_PROVIDER_ENV_KEYS[provider];
+	if (!extra || extra.length === 0) return PI_ENV_PASSTHROUGH;
+	return [...PI_ENV_PASSTHROUGH, ...extra];
+}
+
 export const piRuntime: AgentRuntime = {
 	id: "pi",
 	displayName: "Pi",
 	supportsResume: true,
-	envPassthrough: PI_ENV_PASSTHROUGH,
+	envPassthrough: piEnvPassthrough,
 
 	buildSpawnCommand(ctx: SpawnContext): SpawnCommand {
 		return {

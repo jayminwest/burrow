@@ -379,6 +379,15 @@ interface CollectRuntimeEnvPassthroughInput {
  * `[env].required` / `[env].optional`. An agent that opts out of credential
  * forwarding via `forwardCredentials = false` also opts out of env
  * passthrough — the two channels carry the same secret.
+ *
+ * Function-form `envPassthrough` (burrow-6f3f) is invoked with an empty
+ * frontmatter so only the runtime's base set lands in the profile here;
+ * per-run additions (e.g. pi's provider-key delta when frontmatter selects
+ * a non-anthropic provider) are computed at dispatch time and unioned onto
+ * a per-spawn profile copy. Calling the function here is what preserves
+ * the `forwardCredentials = false` opt-out for those base names —
+ * dispatch-time augmentation only fires when the runtime is configured to
+ * forward in the first place.
  */
 function collectRuntimeEnvPassthrough(input: CollectRuntimeEnvPassthroughInput): string[] {
 	const out: string[] = [];
@@ -386,8 +395,9 @@ function collectRuntimeEnvPassthrough(input: CollectRuntimeEnvPassthroughInput):
 	for (const agent of input.agents) {
 		if (agent.forwardCredentials === false) continue;
 		const rt = input.registry.get(agent.id);
-		const names = rt?.envPassthrough;
-		if (!names) continue;
+		const passthrough = rt?.envPassthrough;
+		if (!passthrough) continue;
+		const names = typeof passthrough === "function" ? passthrough({}) : passthrough;
 		for (const name of names) {
 			if (name.length === 0 || seen.has(name)) continue;
 			seen.add(name);

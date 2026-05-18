@@ -88,6 +88,17 @@ export interface ExtractMetadataContext {
 }
 
 /**
+ * Context handed to a function-form `AgentRuntime.envPassthrough` (burrow-6f3f).
+ * Intentionally narrow — only the per-run frontmatter is needed to pick a
+ * provider-conditional key set, so the type doesn't pull in the rest of
+ * `SpawnContext` and is callable from both `burrow up` (base names with an
+ * empty frontmatter) and the dispatcher (real frontmatter from the run).
+ */
+export interface EnvPassthroughContext {
+	frontmatter?: AgentFrontmatter;
+}
+
+/**
  * Partial event shape produced by `parseEvents`. The run-loop layer fills in
  * `id`, `seq`, `burrowId`, `runId`, and `ts` when persisting.
  */
@@ -177,8 +188,19 @@ export interface AgentRuntime {
 	 * This is the runtime-level escape hatch for env names that are an
 	 * intrinsic part of the runtime's contract (e.g. `ANTHROPIC_API_KEY` for
 	 * `claude-code`); per-project keys still belong in `burrow.toml [env]`.
+	 *
+	 * Function form (burrow-6f3f): runtimes that multiplex over providers
+	 * (e.g. `pi --provider <name>`) can declare a callback that returns the
+	 * effective passthrough set for a given run's frontmatter. `burrow up`
+	 * invokes it with an empty frontmatter to bake the runtime's *base*
+	 * names into `profile.envPassthrough` (respecting per-agent
+	 * `forwardCredentials = false`); the run dispatcher re-invokes it with
+	 * the run's actual `frontmatter` and unions the returned names onto the
+	 * profile passthrough used for that spawn. The function must be pure
+	 * (no side effects, no host env reads) so up-time and dispatch-time
+	 * callers agree on the base set.
 	 */
-	envPassthrough?: readonly string[];
+	envPassthrough?: readonly string[] | ((ctx: EnvPassthroughContext) => readonly string[]);
 
 	installCheck(): Promise<InstallCheckResult>;
 }

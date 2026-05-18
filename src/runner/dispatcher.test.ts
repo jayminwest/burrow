@@ -531,6 +531,83 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 		expect(finalized.metadataJson).toEqual({ session_id: sessionId });
 	});
 
+	test("function-form envPassthrough resolves per-run frontmatter (burrow-6f3f)", async () => {
+		// Warren's multi-provider override path (warren-fe96) stores
+		// `frontmatter.provider` on `Run.metadataJson`. The dispatcher must
+		// re-invoke pi's function-form envPassthrough with that frontmatter
+		// and union the matching provider key onto the per-spawn profile —
+		// otherwise the sandbox never sees `OPENAI_API_KEY` (or the gemini /
+		// groq / mistral / deepseek equivalents) and pi's first API call
+		// fails on auth.
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+		const calls: CollectedSpawn[] = [];
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ stdoutLines: [], calls }),
+			installCheck: async () => ({ installed: true, version: "0.74.0", path: "/usr/local/bin/pi" }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "p",
+			metadata: { frontmatter: { provider: "openai", model: "gpt-4o" } },
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		expect(calls).toHaveLength(1);
+		const passthrough = calls[0]?.profile.envPassthrough ?? [];
+		// OPENAI_API_KEY is the per-run delta — without dispatch-time
+		// augmentation it would never reach the sandbox.
+		expect(passthrough).toContain("OPENAI_API_KEY");
+		// Anthropic base stays available too so a follow-up run that flips
+		// back to anthropic doesn't have to recreate the burrow.
+		expect(passthrough).toContain("ANTHROPIC_API_KEY");
+		expect(passthrough).toContain("ANTHROPIC_AUTH_TOKEN");
+		expect(passthrough).toContain("ANTHROPIC_BASE_URL");
+		// Other providers' keys MUST NOT leak when only openai was selected.
+		for (const leak of ["GEMINI_API_KEY", "GROQ_API_KEY", "MISTRAL_API_KEY", "DEEPSEEK_API_KEY"]) {
+			expect(passthrough).not.toContain(leak);
+		}
+	});
+
+	test("no frontmatter override → dispatch profile envPassthrough unchanged (burrow-6f3f)", async () => {
+		// The default-provider path (no frontmatter) must not mutate the
+		// profile envPassthrough — the up-time bake already covered the
+		// anthropic base. `applyRuntimeEnvPassthrough` returns the profile
+		// by reference so a profile mid-spawn isn't gratuitously copied.
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+		const calls: CollectedSpawn[] = [];
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ stdoutLines: [], calls }),
+			installCheck: async () => ({ installed: true, version: "0.74.0", path: "/usr/local/bin/pi" }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		// seedActiveBurrow seeds envPassthrough: []; the dispatcher adds the
+		// anthropic triple here because the up-time bake didn't run (the
+		// test seeds the profile directly), so the function-form delta is
+		// the full base set. Either way: no openai key leaks.
+		const passthrough = calls[0]?.profile.envPassthrough ?? [];
+		expect(passthrough).not.toContain("OPENAI_API_KEY");
+		expect(passthrough).not.toContain("GEMINI_API_KEY");
+	});
+
 	test("resume run: buildResumeCommand pins --session <id> from prior run metadata", async () => {
 		const burrow = seedActiveBurrow(client, workspaceDir);
 		client.agents.register(piRuntime);

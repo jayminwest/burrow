@@ -11,7 +11,9 @@ import {
 	PI_DEFAULT_PROVIDER,
 	PI_ENV_PASSTHROUGH,
 	PI_FORCED_ARGV,
+	PI_PROVIDER_ENV_KEYS,
 	PI_SESSION_DIR,
+	piEnvPassthrough,
 	piRuntime,
 	readNewestPiSessionId,
 } from "./pi.ts";
@@ -382,18 +384,103 @@ describe("encodePiStdin", () => {
 	});
 });
 
-describe("piRuntime.envPassthrough", () => {
-	test("forwards the anthropic env trio and nothing else (locked)", () => {
-		// Frozen list — argv pins --provider anthropic, so forwarding
-		// other-provider keys would leak host secrets into a sandbox that
-		// can't authenticate against them. Bumping requires lifting the
-		// provider pin too.
-		expect(piRuntime.envPassthrough).toBe(PI_ENV_PASSTHROUGH);
+describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
+	// Function-form passthrough — conditional on frontmatter.provider so a
+	// run flipped to a non-anthropic provider via warren's multi-provider
+	// override path (warren-fe96) gets the matching host key forwarded.
+	// At burrow up time the same function is invoked with an empty
+	// frontmatter to bake the anthropic base into profile.envPassthrough;
+	// the dispatcher re-invokes it with the run's frontmatter and unions
+	// the delta onto the per-spawn profile.
+	test("base set is the anthropic env trio (default provider, locked)", () => {
+		// Frozen base list — the anthropic auth surface stays available
+		// regardless of provider override so a follow-up run that flips
+		// back to anthropic keeps authenticating.
 		expect([...PI_ENV_PASSTHROUGH]).toEqual([
 			"ANTHROPIC_API_KEY",
 			"ANTHROPIC_AUTH_TOKEN",
 			"ANTHROPIC_BASE_URL",
 		]);
+	});
+
+	test("envPassthrough is a function on the runtime", () => {
+		expect(typeof piRuntime.envPassthrough).toBe("function");
+	});
+
+	test("no frontmatter → base anthropic triple, nothing else", () => {
+		expect(piEnvPassthrough({})).toEqual([...PI_ENV_PASSTHROUGH]);
+	});
+
+	test("frontmatter.provider unset / empty / whitespace → base only", () => {
+		expect(piEnvPassthrough({ frontmatter: {} })).toEqual([...PI_ENV_PASSTHROUGH]);
+		expect(piEnvPassthrough({ frontmatter: { provider: "" } })).toEqual([...PI_ENV_PASSTHROUGH]);
+		expect(piEnvPassthrough({ frontmatter: { provider: "   " } })).toEqual([...PI_ENV_PASSTHROUGH]);
+	});
+
+	test("provider=anthropic (explicit) → base only (no double-include)", () => {
+		expect(piEnvPassthrough({ frontmatter: { provider: PI_DEFAULT_PROVIDER } })).toEqual([
+			...PI_ENV_PASSTHROUGH,
+		]);
+	});
+
+	test("provider=openai → base + OPENAI_API_KEY", () => {
+		const names = piEnvPassthrough({ frontmatter: { provider: "openai" } });
+		expect(names).toContain("OPENAI_API_KEY");
+		// Base still present so a host with both keys set keeps anthropic
+		// auth viable across resume / provider flips.
+		for (const base of PI_ENV_PASSTHROUGH) expect(names).toContain(base);
+		// Single-key delta — other providers' keys MUST NOT leak when the
+		// run only selected openai.
+		expect(names).not.toContain("GEMINI_API_KEY");
+		expect(names).not.toContain("GOOGLE_API_KEY");
+		expect(names).not.toContain("GROQ_API_KEY");
+		expect(names).not.toContain("MISTRAL_API_KEY");
+		expect(names).not.toContain("DEEPSEEK_API_KEY");
+	});
+
+	test("each non-anthropic provider opts in only its matching key", () => {
+		const cases: Array<[string, string]> = [
+			["openai", "OPENAI_API_KEY"],
+			["gemini", "GEMINI_API_KEY"],
+			["google", "GOOGLE_API_KEY"],
+			["groq", "GROQ_API_KEY"],
+			["mistral", "MISTRAL_API_KEY"],
+			["deepseek", "DEEPSEEK_API_KEY"],
+		];
+		for (const [provider, key] of cases) {
+			const names = piEnvPassthrough({ frontmatter: { provider } });
+			expect(names).toEqual([...PI_ENV_PASSTHROUGH, key]);
+		}
+	});
+
+	test("provider name is matched case-insensitively (warren normalizes to lowercase)", () => {
+		expect(piEnvPassthrough({ frontmatter: { provider: "OPENAI" } })).toEqual([
+			...PI_ENV_PASSTHROUGH,
+			"OPENAI_API_KEY",
+		]);
+		expect(piEnvPassthrough({ frontmatter: { provider: "OpenAI" } })).toEqual([
+			...PI_ENV_PASSTHROUGH,
+			"OPENAI_API_KEY",
+		]);
+	});
+
+	test("unknown provider → base only (project still opts in via burrow.toml [env])", () => {
+		expect(piEnvPassthrough({ frontmatter: { provider: "made-up-llm" } })).toEqual([
+			...PI_ENV_PASSTHROUGH,
+		]);
+	});
+
+	test("PI_PROVIDER_ENV_KEYS exposes the canonical key per provider name", () => {
+		// Map is the contract surface for warren-fe96's multi-provider
+		// passthrough wiring. Frozen against accidental edits.
+		expect(PI_PROVIDER_ENV_KEYS).toEqual({
+			openai: ["OPENAI_API_KEY"],
+			gemini: ["GEMINI_API_KEY"],
+			google: ["GOOGLE_API_KEY"],
+			groq: ["GROQ_API_KEY"],
+			mistral: ["MISTRAL_API_KEY"],
+			deepseek: ["DEEPSEEK_API_KEY"],
+		});
 	});
 });
 
