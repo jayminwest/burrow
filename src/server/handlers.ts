@@ -422,6 +422,8 @@ function createBurrow(client: Client): RouteHandler {
 		if (provider !== undefined) input.provider = provider;
 		const agents = optionalStringArray(body, "agents");
 		if (agents !== undefined) input.agents = agents;
+		const envOverrides = parseEnvMap(body.env);
+		if (envOverrides !== undefined) input.envOverrides = envOverrides;
 
 		// Validate the seed payload upfront — bad shape rejects without
 		// provisioning. Path resolution still happens after `up()` returns

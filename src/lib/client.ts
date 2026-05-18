@@ -111,6 +111,14 @@ export interface BurrowUpInput {
 	 * actually exec the runtime's binary.
 	 */
 	agents?: readonly string[];
+	/**
+	 * Env var overrides forwarded into `resolveEnv` and baked into the
+	 * sandbox profile (warren-a346 / burrow-59cd). Wins over
+	 * `[env].defaults`, `[secrets]`, the secret store, and the host env —
+	 * see `src/cli/commands/up.ts` step 4. The HTTP handler reads these
+	 * from `body.env` on `POST /burrows`.
+	 */
+	envOverrides?: Record<string, string>;
 }
 
 /**
@@ -175,12 +183,19 @@ export class BurrowsClient {
 		if (input.network !== undefined) options.network = input.network;
 		if (input.provider !== undefined) options.provider = input.provider;
 		if (input.agents !== undefined) options.agents = input.agents;
-		const result = await runUpCommand({
+		const upInput: UpCommandInput = {
 			client: this.client,
 			projectRoot: input.projectRoot,
 			options,
 			...(this.upOverrides ?? {}),
-		});
+		};
+		// Wire-level envOverrides (HTTP body.env / burrow-be5b) fills in only
+		// when no test-seam override already set them, so setUpOverrides()
+		// keeps winning for handler tests.
+		if (input.envOverrides !== undefined && upInput.envOverrides === undefined) {
+			upInput.envOverrides = input.envOverrides;
+		}
+		const result = await runUpCommand(upInput);
 		return result.burrow;
 	}
 
