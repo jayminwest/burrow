@@ -90,6 +90,14 @@ network = "restricted"
 		expect(added).toEqual(["claude-code", "codex"]);
 	});
 
+	test("recognizes `pi` as a built-in id", async () => {
+		writeStarterToml();
+		const result = await runAgentsAdd({ projectRoot, tokens: ["pi"] });
+		expect(result.outcomes).toEqual([{ token: "pi", canonicalId: "pi", added: true }]);
+		const raw = readFileSync(join(projectRoot, BURROW_TOML_FILENAME), "utf8");
+		expect(raw).toContain(`id = "pi"`);
+	});
+
 	test("unknown token errors BEFORE mutating the file", async () => {
 		writeStarterToml();
 		await expect(runAgentsAdd({ projectRoot, tokens: ["gemini"] })).rejects.toBeInstanceOf(

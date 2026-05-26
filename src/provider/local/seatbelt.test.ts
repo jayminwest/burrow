@@ -93,6 +93,16 @@ describe("buildSeatbeltProfile", () => {
 		expect(out).toContain('(allow file-read* (subpath "/Users/u/.cargo"))');
 	});
 
+	test("homebrew roots are admitted when toolchains live under /opt/homebrew", () => {
+		const out = buildSeatbeltProfile(
+			baseProfile({
+				toolchainPaths: ["/opt/homebrew/Cellar/node/25.6.0/bin"],
+				readOnlyMounts: ["/opt/homebrew/Cellar/node/25.6.0/lib"],
+			}),
+		);
+		expect(out).toContain('(allow file-read* (subpath "/opt/homebrew"))');
+	});
+
 	test("bun global install root is allowed read when in toolchainPaths (burrow-aa46)", () => {
 		// `up` adds `<BUN_INSTALL>/install/global/node_modules` to toolchainPaths
 		// when bun is a declared toolchain so the bun-shebang stubs under

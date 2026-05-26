@@ -107,7 +107,7 @@ const agentIdParam: ParameterDef = {
 	name: "id",
 	in: "path",
 	required: true,
-	description: "Agent runtime id (e.g. `claude-code`, `sapling`).",
+	description: "Agent runtime id (e.g. `claude-code`, `sapling`, `codex`, `pi`).",
 	schema: { type: "string" },
 };
 

@@ -202,7 +202,7 @@ async function resolveAgentId(input: ResolveAgentIdInput): Promise<string> {
 	if (first) return first;
 	throw new ValidationError("no default agent — pass --agent <id> or declare one in burrow.toml", {
 		recoveryHint:
-			"add an agent with `bw agents add <id>` (e.g. claude, sapling, codex), or pass --agent on the command line",
+			"add an agent with `bw agents add <id>` (e.g. claude, sapling, codex, pi), or pass --agent on the command line",
 	});
 }
 

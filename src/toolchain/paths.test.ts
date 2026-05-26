@@ -53,6 +53,28 @@ describe("expandToolchainBinDirs", () => {
 		}
 	});
 
+	test("adds the outermost node_modules ancestor for node-based global CLIs", () => {
+		const root = mkdtempSync(join(tmpdir(), "burrow-paths-node-"));
+		try {
+			const pkgDist = join(root, "install/global/node_modules/@earendil-works/pi-coding-agent/dist");
+			mkdirSync(pkgDist, { recursive: true });
+			const realBin = join(pkgDist, "cli.js");
+			writeFileSync(realBin, "// entrypoint\n");
+
+			const linkDir = join(root, "bin");
+			mkdirSync(linkDir, { recursive: true });
+			const linkBin = join(linkDir, "pi");
+			symlinkSync(realBin, linkBin);
+
+			const out = expandToolchainBinDirs([linkBin]);
+			expect(out).toContain(linkDir);
+			expect(out).toContain(dirname(realpathSync(realBin)));
+			expect(out).toContain(realpathSync(join(root, "install/global/node_modules")));
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
+	});
+
 	test("skips realpath expansion when the binary itself doesn't exist", () => {
 		const out = expandToolchainBinDirs(["/definitely/not/a/real/path/foo"]);
 		// We still surface the dirname — bwrap/seatbelt mount it `--ro-bind-try`

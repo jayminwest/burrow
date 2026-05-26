@@ -435,21 +435,32 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 		expect(names).not.toContain("GROQ_API_KEY");
 		expect(names).not.toContain("MISTRAL_API_KEY");
 		expect(names).not.toContain("DEEPSEEK_API_KEY");
+		expect(names).not.toContain("ZAI_API_KEY");
 	});
 
-	test("each non-anthropic provider opts in only its matching key", () => {
-		const cases: Array<[string, string]> = [
-			["openai", "OPENAI_API_KEY"],
-			// pi's "google" provider reads GEMINI_API_KEY (per pi-ai
-			// env-api-keys.js); there is no "gemini" provider name.
-			["google", "GEMINI_API_KEY"],
-			["groq", "GROQ_API_KEY"],
-			["mistral", "MISTRAL_API_KEY"],
-			["deepseek", "DEEPSEEK_API_KEY"],
+	test("representative non-anthropic providers opt in only their documented key set", () => {
+		const cases: Array<[string, readonly string[]]> = [
+			["openai", ["OPENAI_API_KEY"]],
+			// pi's "google" provider reads GEMINI_API_KEY; there is no
+			// "gemini" provider name.
+			["google", ["GEMINI_API_KEY"]],
+			["groq", ["GROQ_API_KEY"]],
+			["mistral", ["MISTRAL_API_KEY"]],
+			["deepseek", ["DEEPSEEK_API_KEY"]],
+			["zai", ["ZAI_API_KEY"]],
+			["openrouter", ["OPENROUTER_API_KEY"]],
+			["cloudflare-ai-gateway", ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_GATEWAY_ID"]],
+			["azure-openai-responses", [
+				"AZURE_OPENAI_API_KEY",
+				"AZURE_OPENAI_BASE_URL",
+				"AZURE_OPENAI_RESOURCE_NAME",
+				"AZURE_OPENAI_API_VERSION",
+				"AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+			]],
 		];
-		for (const [provider, key] of cases) {
+		for (const [provider, keys] of cases) {
 			const names = piEnvPassthrough({ frontmatter: { provider } });
-			expect(names).toEqual([...PI_ENV_PASSTHROUGH, key]);
+			expect(names).toEqual([...PI_ENV_PASSTHROUGH, ...keys]);
 		}
 	});
 
@@ -476,11 +487,41 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 		// names match pi's --provider vocabulary exactly; each value is the
 		// env var pi-ai's env-api-keys.js looks up for that provider.
 		expect(PI_PROVIDER_ENV_KEYS).toEqual({
-			openai: ["OPENAI_API_KEY"],
-			google: ["GEMINI_API_KEY"],
-			groq: ["GROQ_API_KEY"],
-			mistral: ["MISTRAL_API_KEY"],
+			"azure-openai-responses": [
+				"AZURE_OPENAI_API_KEY",
+				"AZURE_OPENAI_BASE_URL",
+				"AZURE_OPENAI_RESOURCE_NAME",
+				"AZURE_OPENAI_API_VERSION",
+				"AZURE_OPENAI_DEPLOYMENT_NAME_MAP",
+			],
+			cerebras: ["CEREBRAS_API_KEY"],
+			"cloudflare-ai-gateway": [
+				"CLOUDFLARE_API_KEY",
+				"CLOUDFLARE_ACCOUNT_ID",
+				"CLOUDFLARE_GATEWAY_ID",
+			],
+			"cloudflare-workers-ai": ["CLOUDFLARE_API_KEY", "CLOUDFLARE_ACCOUNT_ID"],
 			deepseek: ["DEEPSEEK_API_KEY"],
+			fireworks: ["FIREWORKS_API_KEY"],
+			groq: ["GROQ_API_KEY"],
+			huggingface: ["HF_TOKEN"],
+			"kimi-coding": ["KIMI_API_KEY"],
+			minimax: ["MINIMAX_API_KEY"],
+			"minimax-cn": ["MINIMAX_CN_API_KEY"],
+			mistral: ["MISTRAL_API_KEY"],
+			"opencode-go": ["OPENCODE_API_KEY"],
+			opencode: ["OPENCODE_API_KEY"],
+			openai: ["OPENAI_API_KEY"],
+			openrouter: ["OPENROUTER_API_KEY"],
+			together: ["TOGETHER_API_KEY"],
+			"vercel-ai-gateway": ["AI_GATEWAY_API_KEY"],
+			xai: ["XAI_API_KEY"],
+			xiaomi: ["XIAOMI_API_KEY"],
+			"xiaomi-token-plan-ams": ["XIAOMI_TOKEN_PLAN_AMS_API_KEY"],
+			"xiaomi-token-plan-cn": ["XIAOMI_TOKEN_PLAN_CN_API_KEY"],
+			"xiaomi-token-plan-sgp": ["XIAOMI_TOKEN_PLAN_SGP_API_KEY"],
+			zai: ["ZAI_API_KEY"],
+			google: ["GEMINI_API_KEY"],
 		});
 	});
 

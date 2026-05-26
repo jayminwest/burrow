@@ -38,6 +38,11 @@ export function expandToolchainBinDirs(paths: Iterable<string | null | undefined
 			seen.add(realDir);
 			out.push(realDir);
 		}
+		const nodeModulesRoot = realDir ? outermostNodeModulesAncestorFromRoot(realDir) : null;
+		if (nodeModulesRoot && !seen.has(nodeModulesRoot)) {
+			seen.add(nodeModulesRoot);
+			out.push(nodeModulesRoot);
+		}
 	}
 	return out;
 }
@@ -50,6 +55,18 @@ function realpathDirOrNull(path: string): string | null {
 	} catch {
 		return null;
 	}
+}
+
+function outermostNodeModulesAncestorFromRoot(start: string): string | null {
+	let cursor = start;
+	let outermost: string | null = null;
+	while (true) {
+		if (basename(cursor) === "node_modules") outermost = cursor;
+		const parent = dirname(cursor);
+		if (parent === cursor) break;
+		cursor = parent;
+	}
+	return outermost;
 }
 
 export interface WalkToolchainBinSymlinksInput {

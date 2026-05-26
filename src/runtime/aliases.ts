@@ -14,6 +14,7 @@ export const AGENT_ALIASES: Readonly<Record<string, string>> = {
 	sp: "sapling",
 	codex: "codex",
 	cx: "codex",
+	pi: "pi",
 };
 
 /**
@@ -27,5 +28,5 @@ export function resolveAgentAlias(token: string): string | null {
 
 /** Canonical ids of the built-ins, in display order. */
 export function knownBuiltInIds(): string[] {
-	return ["claude-code", "sapling", "codex"];
+	return ["claude-code", "sapling", "codex", "pi"];
 }

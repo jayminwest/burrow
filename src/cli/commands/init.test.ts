@@ -131,6 +131,16 @@ describe("runInitCommand — agent positional args", () => {
 		expect(raw.match(/\[\[agents\]\]/g)?.length).toBe(2);
 	});
 
+	test("`bw init pi` recognizes pi as a built-in canonical id", async () => {
+		const result = await runInitCommand({ projectRoot, agents: ["pi"] });
+		expect(result.agents).toEqual(["pi"]);
+		const raw = readFileSync(join(projectRoot, BURROW_TOML_FILENAME), "utf8");
+		expect(raw).toContain(`id = "pi"`);
+		const parsed = parseBurrowToml(raw);
+		expect(parsed.ok).toBe(true);
+		expect(parsed.config?.agents?.[0]?.id).toBe("pi");
+	});
+
 	test("unknown agent token throws ValidationError BEFORE writing", async () => {
 		await expect(runInitCommand({ projectRoot, agents: ["gemini"] })).rejects.toBeInstanceOf(
 			ValidationError,

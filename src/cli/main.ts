@@ -104,7 +104,7 @@ program
 	.description(
 		"scaffold a burrow.toml in the current project (pass agent ids as positional args, e.g. `bw init claude`)",
 	)
-	.argument("[agents...]", "agent ids or aliases (claude, sapling, codex, ...) to pre-declare")
+	.argument("[agents...]", "agent ids or aliases (claude, sapling, codex, pi, ...) to pre-declare")
 	.option("--name <name>", "override [project].name (defaults to dirname)")
 	.option("--force", "overwrite an existing burrow.toml")
 	.option("--dry-run", "print the rendered file without writing")
@@ -525,7 +525,7 @@ agents
 agents
 	.command("add")
 	.description("append [[agents]] stanzas to burrow.toml (built-in id or alias)")
-	.argument("<id...>", "agent ids or aliases — e.g. `claude`, `sapling`, `codex`")
+	.argument("<id...>", "agent ids or aliases — e.g. `claude`, `sapling`, `codex`, `pi`")
 	.option("--project <root>", "project root (defaults to cwd)")
 	.option("--json", "emit machine-readable JSON")
 	.action(async (ids: string[], opts: { project?: string; json?: boolean }) => {

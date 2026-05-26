@@ -180,7 +180,7 @@ function renderBurrowToml(opts: RenderOptions): string {
 
 	if (opts.agentIds.length > 0) {
 		lines.push(
-			`# Agents declared for this project. Built-ins (claude-code, sapling, codex)`,
+			`# Agents declared for this project. Built-ins (claude-code, sapling, codex, pi)`,
 			`# are auto-registered; an explicit entry pins the choice and lets you patch`,
 			`# defaults without forking the runtime.`,
 			``,
@@ -190,7 +190,7 @@ function renderBurrowToml(opts: RenderOptions): string {
 		}
 	} else {
 		lines.push(
-			`# Add agents that aren't built-in here. Built-in ids: claude-code, sapling, codex.`,
+			`# Add agents that aren't built-in here. Built-in ids: claude-code, sapling, codex, pi.`,
 			`# Run \`burrow agents add <id>\` to append an entry without editing this file.`,
 			`# [[agents]]`,
 			`# id = "my-custom-agent"`,

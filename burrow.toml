@@ -31,7 +31,7 @@ identity = "user"                # user | bot
 read_only_main_branch = true     # block pushes to default_branch
 credentials = "ssh-agent"        # ssh-agent | managed-key | token
 
-# Agents declared for this project. Built-ins (claude-code, sapling, codex)
+# Agents declared for this project. Built-ins (claude-code, sapling, codex, pi)
 # are auto-registered; an explicit entry pins the choice and lets you patch
 # defaults without forking the runtime.
 

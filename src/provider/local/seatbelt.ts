@@ -33,6 +33,12 @@ export const SYSTEM_READ_SUBPATHS: readonly string[] = [
 	"/dev",
 ];
 
+const PACKAGE_MANAGER_READ_ROOTS: readonly string[] = [
+	"/opt/homebrew",
+	"/opt/local",
+	"/nix/store",
+] as const;
+
 export interface BuildSeatbeltArgvOptions {
 	/** Override the sandbox-exec binary (testing or non-PATH installs). */
 	sandboxExecBin?: string;
@@ -58,6 +64,10 @@ export function buildSeatbeltProfile(profile: SandboxProfile): string {
 	lines.push('(allow file-read* (literal "/"))');
 
 	for (const path of SYSTEM_READ_SUBPATHS) {
+		lines.push(`(allow file-read* (subpath ${sbString(path)}))`);
+	}
+
+	for (const path of collectDynamicReadRoots(profile)) {
 		lines.push(`(allow file-read* (subpath ${sbString(path)}))`);
 	}
 
@@ -144,4 +154,22 @@ function renderNetworkRules(profile: SandboxProfile): string[] {
 function sbString(value: string): string {
 	const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 	return `"${escaped}"`;
+}
+
+function collectDynamicReadRoots(profile: SandboxProfile): string[] {
+	const out: string[] = [];
+	const seen = new Set<string>();
+	const add = (path: string): void => {
+		if (seen.has(path)) return;
+		seen.add(path);
+		out.push(path);
+	};
+
+	for (const raw of [...profile.toolchainPaths, ...profile.readOnlyMounts]) {
+		for (const root of PACKAGE_MANAGER_READ_ROOTS) {
+			if (raw === root || raw.startsWith(`${root}/`)) add(root);
+		}
+	}
+
+	return out;
 }

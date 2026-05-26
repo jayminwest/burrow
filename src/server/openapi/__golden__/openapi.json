@@ -1372,7 +1372,7 @@
               "type": "string"
             },
             "required": true,
-            "description": "Agent runtime id (e.g. `claude-code`, `sapling`)."
+            "description": "Agent runtime id (e.g. `claude-code`, `sapling`, `codex`, `pi`)."
           }
         ],
         "responses": {
