@@ -1,7 +1,15 @@
 /**
  * Map thrown errors to `{ status, ErrorEnvelope }`. Each `BurrowError` subclass
- * has a known HTTP mapping; unknown errors fall through to 500. The CLI's
- * exitCodeFor() in src/cli/main.ts is the sister table — keep them aligned.
+ * has a known HTTP mapping; unknown errors fall through to 500.
+ *
+ * NOTE: this is NOT a 1:1 sister table of the CLI's exitCodeFor() in
+ * src/cli/exit-codes.ts. statusFor() gives every subclass a precise HTTP code
+ * (424, 502, 409, 503, 401, ...); the CLI deliberately collapses those into
+ * the five SPEC §16 exit-code buckets (0/1/2/3/4), so most subclasses fall
+ * through to the generic `1` there. That asymmetry is the intended contract
+ * — not drift — and both tables are pinned by unit tests (errors.test.ts
+ * here and exit-codes.test.ts in the CLI). Update them together only when
+ * SPEC §16 itself changes.
  */
 
 import {
