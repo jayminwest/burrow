@@ -208,10 +208,11 @@ program
 			const result = runAttachCommand({ client, burrowId: id, options: opts });
 			if (opts.json) {
 				process.stdout.write(
-					`${JSON.stringify({
-						burrow: result.burrow,
-						wasAlreadyActive: result.wasAlreadyActive,
-					})}\n`,
+					`${JSON.stringify(
+						{ burrow: result.burrow, wasAlreadyActive: result.wasAlreadyActive },
+						null,
+						2,
+					)}\n`,
 				);
 			} else {
 				process.stdout.write(`${renderAttachResult(result)}\n`);
@@ -685,7 +686,7 @@ program
 	.action((opts: { json?: boolean }) => {
 		const message = "bun install -g @os-eco/burrow-cli@latest";
 		if (opts.json) {
-			process.stdout.write(`${JSON.stringify({ command: message, current: VERSION })}\n`);
+			process.stdout.write(`${JSON.stringify({ command: message, current: VERSION }, null, 2)}\n`);
 		} else {
 			process.stdout.write(
 				`current: ${VERSION}\nrun this to upgrade:\n  ${message}\n` +
