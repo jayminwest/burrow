@@ -205,13 +205,15 @@ const defaultSpawnRelay: RelaySpawner = (argv) =>
 	}) as RelayProcess;
 
 const defaultListen: TcpListener = (hostPort, onConnect) => {
+	type SocketHandlers = { data?: (c: Uint8Array) => void; close?: () => void };
+	const handlersBySocket = new WeakMap<object, SocketHandlers>();
 	const server = Bun.listen({
 		hostname: "127.0.0.1",
 		port: hostPort,
 		socket: {
 			open(socket) {
-				const handlers: { data?: (c: Uint8Array) => void; close?: () => void } = {};
-				(socket as unknown as { __handlers: typeof handlers }).__handlers = handlers;
+				const handlers: SocketHandlers = {};
+				handlersBySocket.set(socket, handlers);
 				onConnect({
 					onData: (h) => {
 						handlers.data = h;
@@ -231,16 +233,16 @@ const defaultListen: TcpListener = (hostPort, onConnect) => {
 				});
 			},
 			data(socket, data) {
-				const handlers = (socket as unknown as { __handlers?: { data?: (c: Uint8Array) => void } })
-					.__handlers;
-				handlers?.data?.(data);
+				handlersBySocket.get(socket)?.data?.(data);
 			},
 			close(socket) {
-				const handlers = (socket as unknown as { __handlers?: { close?: () => void } }).__handlers;
+				const handlers = handlersBySocket.get(socket);
+				handlersBySocket.delete(socket);
 				handlers?.close?.();
 			},
 			error(socket) {
-				const handlers = (socket as unknown as { __handlers?: { close?: () => void } }).__handlers;
+				const handlers = handlersBySocket.get(socket);
+				handlersBySocket.delete(socket);
 				handlers?.close?.();
 			},
 		},
