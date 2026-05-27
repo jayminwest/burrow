@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.5] - 2026-05-27
+
+Nightwatch cleanup release: four small correctness/hygiene fixes from
+plan `pl-12c3`, no behavior changes for happy-path callers.
+
+### Fixed
+
+- **`fix(http-client)`** — `HttpEventsClient.streamRunEvents` now wraps
+  `JSON.parse` of NDJSON lines in try/catch and rethrows as
+  `ValidationError` (with the original `SyntaxError` as `cause`), so
+  `events.tail`/`replay` and `runs.stream` surface typed errors
+  consistent with the rest of `HttpClient` instead of leaking raw
+  `SyntaxError` past the `BurrowError` boundary. (burrow-db13, #8)
+
+### Changed
+
+- **`refactor(inbound-forward)`** — Replaced
+  `as unknown as { __handlers }` socket-state casts in
+  `defaultListen` with a `WeakMap<socket, handlers>`. Same lifecycle
+  (seeded in `open`, cleared on `close`/`error`), no type laundering.
+  (burrow-c99e, #7)
+- **`docs(server/errors)`** — Rewrote the sister-table comment in
+  `src/server/errors.ts` to spell out the intentional asymmetry
+  between `statusFor()` (precise HTTP status per subclass) and the
+  CLI's `exitCodeFor()` (SPEC §16's five buckets). Extracted
+  `exitCodeFor()` from `src/cli/main.ts` into `src/cli/exit-codes.ts`
+  and pinned the SPEC §16 contract in `src/cli/exit-codes.test.ts`.
+  (burrow-5d6b, #6)
+- **`fix(cli)`** — `burrow attach --json` and `burrow upgrade --json`
+  now emit 2-space-indented JSON, matching every other `--json` output
+  in the CLI. (burrow-0ce7, #5)
+
 ## [0.3.4] - 2026-05-20
 
 Fixes the `PI_PROVIDER_ENV_KEYS` mapping so warren's multi-provider
