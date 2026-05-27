@@ -790,6 +790,45 @@ describe("HttpClient (TCP transport)", () => {
 		expect(() => http.events.tail({})).toThrow(ValidationError);
 	});
 
+	test("events.tail surfaces ValidationError on malformed NDJSON line", async () => {
+		// Inject a fake fetch that hands back a hand-rolled NDJSON body: one
+		// well-formed envelope followed by a garbage line. The contract under
+		// test is that the second line raises a typed ValidationError instead
+		// of leaking SyntaxError out of the for-await loop (sd burrow-db13).
+		const valid = JSON.stringify({
+			seq: 1,
+			burrowId: "b1",
+			runId: null,
+			kind: "text",
+			stream: "stdout",
+			payload: { text: "ok" },
+			ts: new Date(1000).toISOString(),
+		});
+		const body = `${valid}\n{not json\n`;
+		const fakeFetch = (async () =>
+			new Response(body, {
+				status: 200,
+				headers: { "content-type": "application/x-ndjson" },
+			})) as unknown as typeof fetch;
+		const client = new HttpClient({
+			transport: { kind: "tcp", hostname: "127.0.0.1", port: 1 },
+			fetch: fakeFetch,
+		});
+		const iter = client.events.tail({ burrowId: "b1", once: true });
+		const first = await iter.next();
+		expect(first.done).toBe(false);
+		expect(first.value?.kind).toBe("text");
+		let caught: unknown;
+		try {
+			await iter.next();
+		} catch (err) {
+			caught = err;
+		}
+		expect(caught).toBeInstanceOf(ValidationError);
+		expect((caught as ValidationError).message).toContain("malformed NDJSON");
+		expect((caught as ValidationError).cause).toBeInstanceOf(SyntaxError);
+	});
+
 	/* ------------------------------------------------------------------- */
 	/* Run stream                                                          */
 	/* ------------------------------------------------------------------- */

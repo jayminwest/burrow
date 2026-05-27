@@ -871,7 +871,21 @@ async function* streamRunEvents(
 
 	try {
 		for await (const line of readNdjsonLines(res, ctrl.signal)) {
-			const envelope = JSON.parse(line) as EventEnvelope;
+			let envelope: EventEnvelope;
+			try {
+				envelope = JSON.parse(line) as EventEnvelope;
+			} catch (err) {
+				// Server contract is one JSON-encoded EventEnvelope per line. A
+				// malformed line means the wire stream is corrupted; surface a
+				// typed BurrowError instead of letting SyntaxError abort the
+				// for-await loop with an opaque shape.
+				throw new ValidationError(
+					`HTTP event stream: malformed NDJSON line: ${
+						err instanceof Error ? err.message : String(err)
+					}`,
+					{ cause: err },
+				);
+			}
 			yield envelopeToRunEvent(envelope);
 		}
 	} finally {
