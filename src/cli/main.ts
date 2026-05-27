@@ -13,15 +13,7 @@
  */
 
 import { Command } from "commander";
-import {
-	AgentNotInstalled,
-	AgentRuntimeError,
-	BurrowError,
-	formatError,
-	NotFoundError,
-	SandboxError,
-	ValidationError,
-} from "../core/errors.ts";
+import { formatError, ValidationError } from "../core/errors.ts";
 import { VERSION } from "../index.ts";
 import { Client } from "../lib/client.ts";
 import {
@@ -68,6 +60,7 @@ import {
 	runWatchCommand,
 	type WatchCommandOptions,
 } from "./commands/watch.ts";
+import { exitCodeFor } from "./exit-codes.ts";
 
 const program = new Command();
 
@@ -754,16 +747,6 @@ function parsePositive(raw: string, flag: string): number {
 		throw new ValidationError(`${flag} expects a positive integer, got '${raw}'`);
 	}
 	return n;
-}
-
-function exitCodeFor(err: unknown): number {
-	if (err instanceof ValidationError) return 3;
-	if (err instanceof NotFoundError) return 2;
-	if (err instanceof SandboxError) return 4;
-	if (err instanceof AgentNotInstalled) return 4;
-	if (err instanceof AgentRuntimeError) return 4;
-	if (err instanceof BurrowError) return 1;
-	return 1;
 }
 
 async function main(): Promise<void> {
