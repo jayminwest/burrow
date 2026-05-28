@@ -119,6 +119,12 @@ export interface HttpBurrowUpInput {
 	 * drop `.canopy/`, `.mulch/`, `.seeds/` inputs before the agent starts.
 	 */
 	seed?: { files: readonly HttpWorkspaceFile[] };
+	/**
+	 * Environment variable overrides applied to the burrow's sandbox profile.
+	 * Mirrors the in-process `BurrowUpInput.envOverrides` field and is wired
+	 * through wire body `env` -> `parseEnvMap` -> `SandboxProfile.setEnv`.
+	 */
+	env?: Record<string, string>;
 }
 
 export type HttpWorkspaceFileEncoding = "utf-8" | "base64";
@@ -353,6 +359,7 @@ export class HttpBurrowsClient {
 		if (input.network !== undefined) body.network = input.network;
 		if (input.provider !== undefined) body.provider = input.provider;
 		if (input.agents !== undefined) body.agents = [...input.agents];
+		if (input.env !== undefined) body.env = { ...input.env };
 		if (input.seed !== undefined) {
 			body.seed = { files: input.seed.files.map(serializeWorkspaceFile) };
 		}

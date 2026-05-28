@@ -246,12 +246,12 @@ describe("HttpClient (TCP transport)", () => {
 	/* ------------------------------------------------------------------- */
 	/* body.env round-trip (burrow-5322 / pl-96ca step 2)                  */
 	/* ------------------------------------------------------------------- */
-	/* HttpBurrowsClient.up doesn't expose `env` yet, so these tests POST */
-	/* raw bodies to /burrows to lock the route-handler contract added in */
-	/* burrow-be5b: body.env → parseEnvMap → input.envOverrides →         */
-	/* resolveEnv → SandboxProfile.setEnv.                                */
+	/* burrow-03cf closes mx-d00e99: HttpBurrowsClient.up now forwards `env`, */
+	/* so these tests drive through the client mirror to lock the parity     */
+	/* contract — body.env → parseEnvMap → input.envOverrides → resolveEnv → */
+	/* SandboxProfile.setEnv — without dropping back to raw fetch.           */
 
-	test("POST /burrows threads body.env into the resolved SandboxProfile.setEnv", async () => {
+	test("HttpBurrowsClient.up({ env }) threads into the resolved SandboxProfile.setEnv", async () => {
 		const projectRoot = mkTmp("burrow-httpclient-proj-");
 		client.burrows.setUpOverrides({
 			skipDoctor: true,
@@ -261,14 +261,10 @@ describe("HttpClient (TCP transport)", () => {
 				identity: null,
 			}),
 		});
-		const baseUrl = tcpBaseUrl(handle);
-		const res = await fetch(`${baseUrl}/burrows`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ projectRoot, env: { FOO: "bar", PLOT_ID: "p-1" } }),
+		const created = await http.burrows.up({
+			projectRoot,
+			env: { FOO: "bar", PLOT_ID: "p-1" },
 		});
-		expect(res.status).toBe(201);
-		const created = (await res.json()) as { id: string };
 		const persisted = client.burrows.get(created.id);
 		// resolveEnv flattens overrides into the SandboxProfile.setEnv map
 		// the runner hands to the sandbox provider — that's the contract
@@ -279,7 +275,7 @@ describe("HttpClient (TCP transport)", () => {
 		rmSync(projectRoot, { recursive: true, force: true });
 	});
 
-	test("POST /burrows without body.env leaves setEnv free of caller-injected keys", async () => {
+	test("HttpBurrowsClient.up() without env leaves setEnv free of caller-injected keys", async () => {
 		const projectRoot = mkTmp("burrow-httpclient-proj-");
 		client.burrows.setUpOverrides({
 			skipDoctor: true,
@@ -289,14 +285,7 @@ describe("HttpClient (TCP transport)", () => {
 				identity: null,
 			}),
 		});
-		const baseUrl = tcpBaseUrl(handle);
-		const res = await fetch(`${baseUrl}/burrows`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ projectRoot }),
-		});
-		expect(res.status).toBe(201);
-		const created = (await res.json()) as { id: string };
+		const created = await http.burrows.up({ projectRoot });
 		const persisted = client.burrows.get(created.id);
 		const setEnv = (persisted.profileJson as { setEnv?: Record<string, string> }).setEnv ?? {};
 		// Acceptance #3: missing body.env is byte-identical to today — no
@@ -318,6 +307,9 @@ describe("HttpClient (TCP transport)", () => {
 		});
 		const baseUrl = tcpBaseUrl(handle);
 		const before = client.burrows.list({ state: "active" }).length;
+		// Raw fetch here because HttpBurrowsClient.up's typed surface (env?:
+		// Record<string, string>) refuses to construct an array body — we
+		// have to bypass the type guard to assert the wire envelope shape.
 		const res = await fetch(`${baseUrl}/burrows`, {
 			method: "POST",
 			headers: { "content-type": "application/json" },
@@ -332,7 +324,7 @@ describe("HttpClient (TCP transport)", () => {
 		rmSync(projectRoot, { recursive: true, force: true });
 	});
 
-	test("POST /burrows rejects body.env with a non-string value", async () => {
+	test("HttpBurrowsClient.up rejects env with a non-string value as ValidationError", async () => {
 		const projectRoot = mkTmp("burrow-httpclient-proj-");
 		client.burrows.setUpOverrides({
 			skipDoctor: true,
@@ -342,16 +334,18 @@ describe("HttpClient (TCP transport)", () => {
 				identity: null,
 			}),
 		});
-		const baseUrl = tcpBaseUrl(handle);
-		const res = await fetch(`${baseUrl}/burrows`, {
-			method: "POST",
-			headers: { "content-type": "application/json" },
-			body: JSON.stringify({ projectRoot, env: { COUNT: 42 } }),
-		});
-		expect(res.status).toBe(400);
-		const body = (await res.json()) as { error: { code: string; message: string } };
-		expect(body.error.code).toBe("validation_error");
-		expect(body.error.message).toBe("field 'env.COUNT' must be a string");
+		let err: unknown;
+		try {
+			await http.burrows.up({
+				projectRoot,
+				// @ts-expect-error — driving the parseEnvMap non-string branch through the typed surface
+				env: { COUNT: 42 },
+			});
+		} catch (e) {
+			err = e;
+		}
+		expect(err).toBeInstanceOf(ValidationError);
+		expect((err as Error).message).toBe("field 'env.COUNT' must be a string");
 		rmSync(projectRoot, { recursive: true, force: true });
 	});
 
