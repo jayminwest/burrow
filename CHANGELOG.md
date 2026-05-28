@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.6] - 2026-05-28
+
+Nightwatch parity release: closes the `mx-d00e99` HTTP client / server
+env-forwarding gap surfaced in plan `pl-e0fb`.
+
+### Fixed
+
+- **`fix(http-client)`** — `HttpBurrowUpInput` now carries an optional
+  `env?: Record<string, string>`, and `HttpBurrowsClient.up` forwards
+  it as `body.env` (matching `HttpSidecarsClient.create`'s env shape).
+  The success-path env tests in `src/lib/http-client.test.ts` now
+  drive through the typed client instead of raw `fetch`, locking
+  client/server parity. (burrow-03cf, #11)
+
 ## [0.3.5] - 2026-05-27
 
 Nightwatch cleanup release: four small correctness/hygiene fixes from

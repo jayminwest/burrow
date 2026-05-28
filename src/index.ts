@@ -5,7 +5,7 @@
  * and consumes the same surface a programmatic caller would.
  */
 
-export const VERSION = "0.3.5";
+export const VERSION = "0.3.6";
 
 export {
 	BURROW_TOML_FILENAME,
