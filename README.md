@@ -160,7 +160,7 @@ Recipe verified on Ubuntu 24.04 host with Docker 28.4.
 
 ## Ecosystem
 
-Burrow is part of the [os-eco](https://github.com/jayminwest/os-eco) ecosystem. It does not orchestrate agents — that's [Overstory](https://github.com/jayminwest/overstory) and [Mycelium](https://github.com/jayminwest/mycelium). It runs whatever agent the orchestrator hands it, in isolation.
+Burrow is part of the [os-eco](https://github.com/jayminwest/os-eco) ecosystem. It does not orchestrate agents — that's [Mycelium](https://github.com/jayminwest/mycelium). It runs whatever agent the orchestrator hands it, in isolation.
 
 ## Contributing
 
