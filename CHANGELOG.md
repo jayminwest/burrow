@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.7] - 2026-05-29
+
+Nightwatch patrol release: five small independent correctness/hygiene
+fixes from plan `pl-77d8`. No behavior changes for happy-path callers.
+
+### Fixed
+
+- **`fix(cli)`** — `burrow send --json` now emits 2-space-indented
+  JSON, matching every other `--json` output in the CLI.
+  (burrow-2444, #15)
+- **`fix(server)`** — `parseLimit` now rejects query params with
+  trailing garbage (e.g. `?limit=10abc`) instead of silently coercing
+  via `parseInt`; callers get a `ValidationError` / HTTP 400.
+  (burrow-1243, #16)
+- **`fix(server)`** — `?archive=` on list endpoints now accepts the
+  same boolean grammar as the streaming endpoints (`1`/`0` alongside
+  `true`/`false`). OpenAPI spec + golden updated to match.
+  (burrow-8ce9, #17)
+- **`fix(runtime/parsers)`** — `jsonl-claude` and `stream-json` NDJSON
+  parsers now reject top-level JSON arrays on a line instead of
+  treating them as a valid event. (burrow-68c6, #19)
+
+### Changed
+
+- **`refactor(provider/local)`** — Extracted the duplicated
+  `workspaceSource` extractor shared by `cli/commands/fork` and
+  `lib/destroy` into `src/provider/local/workspace.ts`, with unit
+  tests pinning the behavior. (burrow-6732, #18)
+
 ## [0.3.6] - 2026-05-28
 
 Nightwatch parity release: closes the `mx-d00e99` HTTP client / server
