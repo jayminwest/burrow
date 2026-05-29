@@ -302,7 +302,7 @@ const OPERATIONS: readonly PathOperation[] = [
 					name: "archive",
 					in: "query",
 					description: "When false, skip the events/messages/runs export.",
-					schema: { type: "string", enum: ["true", "false"] },
+					schema: { type: "string", enum: ["true", "false", "1", "0"] },
 				},
 			],
 			responses: {

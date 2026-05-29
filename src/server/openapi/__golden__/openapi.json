@@ -1580,7 +1580,9 @@
               "type": "string",
               "enum": [
                 "true",
-                "false"
+                "false",
+                "1",
+                "0"
               ]
             },
             "description": "When false, skip the events/messages/runs export."
