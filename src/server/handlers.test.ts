@@ -159,6 +159,29 @@ describe("server handlers", () => {
 		expect(row?.state).toBe("destroyed");
 	});
 
+	test("DELETE /burrows/:id accepts ?archive=0 (1/0 boolean grammar, burrow-8ce9)", async () => {
+		// Aligns with the streaming endpoints' parseStreamBool grammar so curl
+		// users can write `?archive=0` / `?archive=1` interchangeably with
+		// `?archive=false` / `?archive=true`.
+		const burrow = seedBurrow(client);
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}?archive=0`, {
+			method: "DELETE",
+		});
+		expect(res.status).toBe(200);
+		expect(client.burrows.tryGet(burrow.id)?.state).toBe("destroyed");
+	});
+
+	test("DELETE /burrows/:id rejects ?archive=yes with 400 (burrow-8ce9)", async () => {
+		const burrow = seedBurrow(client);
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}?archive=yes`, {
+			method: "DELETE",
+		});
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error?: { message?: string } };
+		expect(body.error?.message).toContain("archive");
+		expect(client.burrows.tryGet(burrow.id)?.state).not.toBe("destroyed");
+	});
+
 	test("DELETE /burrows/:id removes the workspace (burrow-a79f)", async () => {
 		// Pre-fix the API path archived the row but skipped workspace teardown,
 		// leaking worktrees + branches. Verify the cleanup hook now fires.
