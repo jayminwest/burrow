@@ -977,6 +977,14 @@ describe("server handlers", () => {
 		expect(res.status).toBe(400);
 	});
 
+	test("GET /burrows/:id/events?limit=10abc → 400 (rejects trailing garbage)", async () => {
+		const burrow = seedBurrow(client);
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/events?follow=0&limit=10abc`);
+		expect(res.status).toBe(400);
+		const body = (await res.json()) as { error?: { message?: string } };
+		expect(body.error?.message).toContain("limit must be a positive integer");
+	});
+
 	test("GET /burrows/:id/events stream cancels cleanly on client disconnect", async () => {
 		const burrow = seedBurrow(client);
 		client.repos.events.append({

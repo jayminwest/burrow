@@ -162,7 +162,7 @@ function parseEnum<T extends string>(
 function parseLimit(raw: string | null): number | undefined {
 	if (raw === null) return undefined;
 	const n = Number.parseInt(raw, 10);
-	if (!Number.isFinite(n) || n < 1) {
+	if (!Number.isFinite(n) || n < 1 || String(n) !== raw) {
 		throw new ValidationError(`limit must be a positive integer; got '${raw}'`);
 	}
 	return n;
