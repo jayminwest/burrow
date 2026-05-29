@@ -84,6 +84,23 @@ export function runSendCommand(input: SendCommandInput): SendCommandResult {
 	return { message, deferred, lastAgentId };
 }
 
+/**
+ * Pretty-print the `--json` payload for `burrow send`. Indented with 2 spaces
+ * to match the rest of the CLI's `--json` outputs (renderUpReport, list, etc.)
+ * — humans skim it directly more often than scripts pipe it through `jq`.
+ */
+export function renderSendJson(result: SendCommandResult): string {
+	return `${JSON.stringify(
+		{
+			message: result.message,
+			deferred: result.deferred,
+			lastAgentId: result.lastAgentId,
+		},
+		null,
+		2,
+	)}\n`;
+}
+
 export function renderSendResult(result: SendCommandResult): string {
 	const lines = [`✓ message queued (${result.message.id}, priority: ${result.message.priority})`];
 	if (result.deferred && result.lastAgentId) {
