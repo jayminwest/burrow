@@ -19,6 +19,7 @@ import { realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { WorkspaceMaterializationError } from "../../core/errors.ts";
+import type { Burrow } from "../../core/types.ts";
 import { runGit } from "../../git/exec.ts";
 import {
 	type GitIdentity,
@@ -60,6 +61,24 @@ export interface MaterializedWorkspaceSource {
 	gitCommonDir?: string;
 	/** Origin URL used for fresh clones. Absent for worktrees. */
 	originUrl?: string;
+}
+
+/**
+ * Recover the `MaterializedWorkspaceSource` previously persisted on a burrow's
+ * `providerStateJson`. Returns `null` when the field is missing or has drifted
+ * from the expected shape (kind `worktree`|`clone` with a string `branch`).
+ *
+ * Single source of truth for callers that need to act on the workspace source
+ * after the fact (e.g. destroy/cleanup, fork) — see burrow-6732.
+ */
+export function extractWorkspaceSource(burrow: Burrow): MaterializedWorkspaceSource | null {
+	const state = burrow.providerStateJson;
+	if (!state || typeof state !== "object") return null;
+	const candidate = (state as { workspaceSource?: unknown }).workspaceSource;
+	if (!candidate || typeof candidate !== "object") return null;
+	const c = candidate as { kind?: unknown; branch?: unknown };
+	if ((c.kind !== "worktree" && c.kind !== "clone") || typeof c.branch !== "string") return null;
+	return candidate as MaterializedWorkspaceSource;
 }
 
 export interface MaterializedWorkspace {

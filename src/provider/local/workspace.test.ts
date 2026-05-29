@@ -3,9 +3,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WorkspaceMaterializationError } from "../../core/errors.ts";
+import type { Burrow } from "../../core/types.ts";
 import { runGit } from "../../git/exec.ts";
 import { branchExists, discoverHostClone, initRepo, listWorktrees } from "../../git/worktree.ts";
 import {
+	extractWorkspaceSource,
 	materializeProjectWorkspace,
 	materializeTaskWorkspace,
 	removeMaterializedWorkspace,
@@ -29,6 +31,58 @@ function isolatedEnv(home: string): Record<string, string | undefined> {
 		PATH: process.env.PATH,
 	};
 }
+
+describe("extractWorkspaceSource", () => {
+	function burrowWith(state: unknown): Burrow {
+		return { providerStateJson: state } as unknown as Burrow;
+	}
+
+	test("returns the source for a worktree state", () => {
+		const src = extractWorkspaceSource(
+			burrowWith({
+				workspaceSource: {
+					kind: "worktree",
+					branch: "burrow/bur_x",
+					hostClonePath: "/clones/abc",
+					gitCommonDir: "/clones/abc/.git",
+				},
+			}),
+		);
+		expect(src).toEqual({
+			kind: "worktree",
+			branch: "burrow/bur_x",
+			hostClonePath: "/clones/abc",
+			gitCommonDir: "/clones/abc/.git",
+		});
+	});
+
+	test("returns the source for a clone state", () => {
+		const src = extractWorkspaceSource(
+			burrowWith({
+				workspaceSource: { kind: "clone", branch: "main", originUrl: "https://example/x.git" },
+			}),
+		);
+		expect(src?.kind).toBe("clone");
+		expect(src?.branch).toBe("main");
+	});
+
+	test("returns null when providerStateJson is missing or non-object", () => {
+		expect(extractWorkspaceSource(burrowWith(null))).toBeNull();
+		expect(extractWorkspaceSource(burrowWith(undefined))).toBeNull();
+		expect(extractWorkspaceSource(burrowWith("oops"))).toBeNull();
+	});
+
+	test("returns null when workspaceSource is missing, wrong kind, or wrong branch type", () => {
+		expect(extractWorkspaceSource(burrowWith({}))).toBeNull();
+		expect(extractWorkspaceSource(burrowWith({ workspaceSource: null }))).toBeNull();
+		expect(
+			extractWorkspaceSource(burrowWith({ workspaceSource: { kind: "bogus", branch: "x" } })),
+		).toBeNull();
+		expect(
+			extractWorkspaceSource(burrowWith({ workspaceSource: { kind: "worktree", branch: 42 } })),
+		).toBeNull();
+	});
+});
 
 describe("materializeProjectWorkspace", () => {
 	let root: string;

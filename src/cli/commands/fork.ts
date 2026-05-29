@@ -16,8 +16,8 @@ import { generateId } from "../../core/ids.ts";
 import type { Burrow, BurrowKind } from "../../core/types.ts";
 import type { Client } from "../../lib/client.ts";
 import {
+	extractWorkspaceSource,
 	type MaterializedWorkspace,
-	type MaterializedWorkspaceSource,
 	type MaterializeTaskOptions,
 	materializeTaskWorkspace,
 } from "../../provider/local/workspace.ts";
@@ -51,7 +51,7 @@ export async function runForkCommand(input: ForkCommandInput): Promise<ForkComma
 			recoveryHint: "the parent's workspace is gone — pick an active burrow",
 		});
 	}
-	const parentSource = extractSource(parent);
+	const parentSource = extractWorkspaceSource(parent);
 	if (!parentSource) {
 		throw new ValidationError(
 			`parent ${parent.id} has no recorded workspace source — was it created via burrow up?`,
@@ -122,16 +122,6 @@ export function renderForkResult(result: ForkCommandResult): string {
 	];
 	if (result.burrow.name) lines.push(`  task:      ${result.burrow.name}`);
 	return lines.join("\n");
-}
-
-function extractSource(burrow: Burrow): MaterializedWorkspaceSource | null {
-	const state = burrow.providerStateJson;
-	if (!state || typeof state !== "object") return null;
-	const candidate = (state as { workspaceSource?: unknown }).workspaceSource;
-	if (!candidate || typeof candidate !== "object") return null;
-	const c = candidate as { kind?: unknown; branch?: unknown };
-	if ((c.kind !== "worktree" && c.kind !== "clone") || typeof c.branch !== "string") return null;
-	return candidate as MaterializedWorkspaceSource;
 }
 
 function projectSlug(projectRoot: string): string {
