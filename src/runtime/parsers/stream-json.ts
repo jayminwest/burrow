@@ -27,7 +27,7 @@ export function parseStreamJson(line: string): RuntimeEvent[] {
 		];
 	}
 
-	if (parsed === null || typeof parsed !== "object") {
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
 		return [
 			{
 				kind: "text",

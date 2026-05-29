@@ -28,4 +28,14 @@ describe("parseStreamJson", () => {
 		expect(parseStreamJson("42")[0]?.kind).toBe("text");
 		expect(parseStreamJson('"hi"')[0]?.kind).toBe("text");
 	});
+
+	test("top-level JSON arrays degrade to text events (do not flow through as payload)", () => {
+		const line = '[{"type":"tool_use","name":"Bash"}]';
+		const events = parseStreamJson(line);
+		expect(events).toHaveLength(1);
+		expect(events[0]?.kind).toBe("text");
+		expect(events[0]?.payload).toEqual({ text: line });
+		// guard against the pre-fix bug: array must not be cast through as payload
+		expect(Array.isArray(events[0]?.payload)).toBe(false);
+	});
 });

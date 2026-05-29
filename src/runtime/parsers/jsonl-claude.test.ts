@@ -105,6 +105,15 @@ describe("parseJsonlClaude", () => {
 		expect(events[0]?.payload).toEqual({ text: "after" });
 	});
 
+	test("top-level JSON arrays degrade to text events (do not flow through as payload)", () => {
+		const line = '[{"type":"assistant"}]';
+		const events = parseJsonlClaude(line);
+		expect(events).toHaveLength(1);
+		expect(events[0]?.kind).toBe("text");
+		expect(events[0]?.payload).toEqual({ text: line });
+		expect(Array.isArray(events[0]?.payload)).toBe(false);
+	});
+
 	test("empty-text thinking-only assistant message yields zero events", () => {
 		const line = JSON.stringify({
 			type: "assistant",
