@@ -17,7 +17,7 @@
 import type { Burrow } from "../core/types.ts";
 import { type DestroyBurrowResult, destroyBurrowStorage } from "../events/destroy.ts";
 import {
-	type MaterializedWorkspaceSource,
+	extractWorkspaceSource,
 	type RemoveWorkspaceOptions,
 	removeMaterializedWorkspace,
 } from "../provider/local/workspace.ts";
@@ -89,14 +89,4 @@ async function tryRemoveWorkspace(
 	} catch {
 		return false;
 	}
-}
-
-function extractWorkspaceSource(burrow: Burrow): MaterializedWorkspaceSource | null {
-	const state = burrow.providerStateJson;
-	if (!state || typeof state !== "object") return null;
-	const candidate = (state as { workspaceSource?: unknown }).workspaceSource;
-	if (!candidate || typeof candidate !== "object") return null;
-	const c = candidate as { kind?: unknown; branch?: unknown };
-	if ((c.kind !== "worktree" && c.kind !== "clone") || typeof c.branch !== "string") return null;
-	return candidate as MaterializedWorkspaceSource;
 }
