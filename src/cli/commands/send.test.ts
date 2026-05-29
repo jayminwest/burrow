@@ -8,6 +8,7 @@ import { AgentRegistry } from "../../runtime/registry.ts";
 import {
 	parsePriority,
 	readStdinBody,
+	renderSendJson,
 	renderSendResult,
 	resolveSendBody,
 	runSendCommand,
@@ -136,6 +137,40 @@ describe("runSendCommand", () => {
 		expect(() => runSendCommand({ db, burrowId: burrow.id, body: "hi", options: {} })).toThrow(
 			ValidationError,
 		);
+	});
+});
+
+describe("renderSendJson", () => {
+	const result = {
+		message: {
+			id: "msg_abc",
+			burrowId: "bur_x",
+			fromActor: "user",
+			body: "hi",
+			priority: "urgent" as const,
+			state: "unread" as const,
+			deliveredAtRunId: null,
+			createdAt: new Date(0),
+			deliveredAt: null,
+		},
+		deferred: false,
+		lastAgentId: null,
+	};
+
+	test("emits 2-space-indented JSON terminated with a single newline (burrow-2444)", () => {
+		const out = renderSendJson(result);
+		expect(out.endsWith("\n")).toBe(true);
+		expect(out).toContain('\n  "message": {');
+		expect(out).toContain('\n    "id": "msg_abc"');
+		expect(out).toContain('\n  "deferred": false');
+		expect(out).toContain('\n  "lastAgentId": null');
+		// One trailing newline, not two.
+		expect(out.endsWith("\n\n")).toBe(false);
+		// Parses back round-trip.
+		const parsed = JSON.parse(out);
+		expect(parsed.message.id).toBe("msg_abc");
+		expect(parsed.deferred).toBe(false);
+		expect(parsed.lastAgentId).toBeNull();
 	});
 });
 

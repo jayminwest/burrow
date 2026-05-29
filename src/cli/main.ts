@@ -44,6 +44,7 @@ import {
 } from "./commands/prompt.ts";
 import {
 	parsePriority,
+	renderSendJson,
 	renderSendResult,
 	resolveSendBody,
 	runSendCommand,
@@ -377,13 +378,7 @@ program
 				options: opts,
 			});
 			if (opts.json) {
-				process.stdout.write(
-					`${JSON.stringify({
-						message: result.message,
-						deferred: result.deferred,
-						lastAgentId: result.lastAgentId,
-					})}\n`,
-				);
+				process.stdout.write(renderSendJson(result));
 			} else {
 				process.stdout.write(`${renderSendResult(result)}\n`);
 			}
