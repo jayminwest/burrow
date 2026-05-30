@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.8] - 2026-05-30
+
+Nightwatch patrol release: two surgical correctness/hygiene fixes from
+plan `pl-26a9`. No behavior changes for happy-path callers.
+
+### Fixed
+
+- **`fix(runtime/parsers)`** — `parsePiEvents` now rejects top-level
+  JSON arrays the same way `stream-json` and `jsonl-claude` do, so a
+  bare `[...]` line degrades to a text event instead of being cast
+  through as a `PiEnvelope`. (burrow-6e30, #23)
+- **`fix(server)`** — `parseLimit` / `parsePositiveInt` /
+  `parseNonNegativeInt` now emit the same
+  `<label> expects a <kind> integer, got <raw>` error shape the CLI
+  parsers already use, unifying validation wording across HTTP and
+  CLI surfaces. (burrow-3222, #24)
+
 ## [0.3.7] - 2026-05-29
 
 Nightwatch patrol release: five small independent correctness/hygiene
