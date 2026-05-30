@@ -76,7 +76,7 @@ export function parsePiEvents(line: string): RuntimeEvent[] {
 		];
 	}
 
-	if (parsed === null || typeof parsed !== "object") {
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
 		return [{ kind: "text", stream: "stdout", payload: { text: line } }];
 	}
 

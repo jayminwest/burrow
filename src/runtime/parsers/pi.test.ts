@@ -31,6 +31,17 @@ describe("parsePiEvents", () => {
 		expect(nul[0]?.kind).toBe("text");
 	});
 
+	test("top-level JSON arrays degrade to text events (do not flow through as payload)", () => {
+		const line = '[{"type":"message_end"}]';
+		const events = parsePiEvents(line);
+		expect(events).toHaveLength(1);
+		expect(events[0]?.kind).toBe("text");
+		expect(events[0]?.stream).toBe("stdout");
+		expect(events[0]?.payload).toEqual({ text: line });
+		// guard against the pre-fix bug: array must not be cast through as payload
+		expect(Array.isArray(events[0]?.payload)).toBe(false);
+	});
+
 	test("response (RPC ack) becomes a state_change on the system stream", () => {
 		const events = parsePiEvents(
 			JSON.stringify({ type: "response", command: "prompt", success: true }),
