@@ -1005,7 +1005,7 @@ describe("server handlers", () => {
 		const res = await fetch(`${handle.url}/burrows/${burrow.id}/events?follow=0&limit=10abc`);
 		expect(res.status).toBe(400);
 		const body = (await res.json()) as { error?: { message?: string } };
-		expect(body.error?.message).toContain("limit must be a positive integer");
+		expect(body.error?.message).toContain("limit expects a positive integer");
 	});
 
 	test("GET /burrows/:id/events stream cancels cleanly on client disconnect", async () => {

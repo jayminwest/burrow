@@ -163,7 +163,7 @@ function parseLimit(raw: string | null): number | undefined {
 	if (raw === null) return undefined;
 	const n = Number.parseInt(raw, 10);
 	if (!Number.isFinite(n) || n < 1 || String(n) !== raw) {
-		throw new ValidationError(`limit must be a positive integer; got '${raw}'`);
+		throw new ValidationError(`limit expects a positive integer, got '${raw}'`);
 	}
 	return n;
 }
@@ -172,7 +172,7 @@ function parsePositiveInt(raw: string | null, label: string): number | undefined
 	if (raw === null) return undefined;
 	const n = Number.parseInt(raw, 10);
 	if (!Number.isFinite(n) || n < 1 || String(n) !== raw) {
-		throw new ValidationError(`${label} must be a positive integer; got '${raw}'`);
+		throw new ValidationError(`${label} expects a positive integer, got '${raw}'`);
 	}
 	return n;
 }
@@ -181,7 +181,7 @@ function parseNonNegativeInt(raw: string | null, label: string): number | undefi
 	if (raw === null) return undefined;
 	const n = Number.parseInt(raw, 10);
 	if (!Number.isFinite(n) || n < 0 || String(n) !== raw) {
-		throw new ValidationError(`${label} must be a non-negative integer; got '${raw}'`);
+		throw new ValidationError(`${label} expects a non-negative integer, got '${raw}'`);
 	}
 	return n;
 }
