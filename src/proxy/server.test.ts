@@ -220,3 +220,81 @@ describe("startProxy (lifecycle + diagnostics)", () => {
 		}
 	});
 });
+
+describe("startProxy (malformed targets)", () => {
+	async function sendConnect(proxyPort: number, line: string): Promise<string> {
+		const sock = net.connect(proxyPort, "127.0.0.1");
+		await new Promise<void>((resolve) => sock.once("connect", resolve));
+		sock.write(`CONNECT ${line} HTTP/1.1\r\nHost: ${line}\r\n\r\n`);
+		return new Promise<string>((resolve) => {
+			let buf = "";
+			sock.on("data", (chunk) => {
+				buf += chunk.toString("utf8");
+			});
+			sock.on("close", () => resolve(buf));
+		});
+	}
+
+	test("CONNECT host:80abc → 400 (trailing garbage rejected)", async () => {
+		const proxy = await startProxy({ allowedDomains: ["example.com"] });
+		try {
+			const reply = await sendConnect(proxy.port, "example.com:80abc");
+			expect(reply).toContain("400 Bad Request");
+			expect(proxy.allowedCount).toBe(0);
+			expect(proxy.deniedCount).toBe(1);
+		} finally {
+			await proxy.stop();
+		}
+	});
+
+	test("CONNECT host: (empty port) → 400", async () => {
+		const proxy = await startProxy({ allowedDomains: ["example.com"] });
+		try {
+			const reply = await sendConnect(proxy.port, "example.com:");
+			expect(reply).toContain("400 Bad Request");
+			expect(proxy.deniedCount).toBe(1);
+		} finally {
+			await proxy.stop();
+		}
+	});
+
+	test("CONNECT host:99999 → 400 (out-of-range rejected)", async () => {
+		const proxy = await startProxy({ allowedDomains: ["example.com"] });
+		try {
+			const reply = await sendConnect(proxy.port, "example.com:99999");
+			expect(reply).toContain("400 Bad Request");
+			expect(proxy.deniedCount).toBe(1);
+		} finally {
+			await proxy.stop();
+		}
+	});
+
+	test("HTTP forward with garbage port in absolute URL → 400", async () => {
+		// `new URL` itself rejects most malformed ports, but the defense-in-depth
+		// guard in parseHttpTarget should also reject any URL whose port string
+		// round-trips differently from its parsed integer. Use a Host-header form
+		// (rare client shape) where the fallback URL constructor accepts the
+		// authority verbatim.
+		const proxy = await startProxy({ allowedDomains: ["example.com"] });
+		try {
+			const sock = net.connect(proxy.port, "127.0.0.1");
+			await new Promise<void>((resolve) => sock.once("connect", resolve));
+			// Absolute-form URI with a clearly malformed port. `new URL` will
+			// reject this outright, exercising the existing `return null` path.
+			sock.write(
+				"GET http://example.com:80abc/ HTTP/1.1\r\nHost: example.com:80abc\r\nConnection: close\r\n\r\n",
+			);
+			const reply = await new Promise<string>((resolve) => {
+				let buf = "";
+				sock.on("data", (chunk) => {
+					buf += chunk.toString("utf8");
+				});
+				sock.on("close", () => resolve(buf));
+			});
+			expect(reply).toContain("400");
+			expect(proxy.allowedCount).toBe(0);
+		} finally {
+			await proxy.stop();
+		}
+	});
+});

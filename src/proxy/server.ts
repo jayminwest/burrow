@@ -240,8 +240,10 @@ function parseHttpTarget(req: http.IncomingMessage): HttpTarget | null {
 		}
 	}
 	if (parsed.protocol !== "http:") return null;
-	const port = parsed.port ? Number.parseInt(parsed.port, 10) : 80;
+	const rawPort = parsed.port;
+	const port = rawPort ? Number.parseInt(rawPort, 10) : 80;
 	if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
+	if (rawPort && String(port) !== rawPort) return null;
 	return {
 		hostname: parsed.hostname,
 		port,
@@ -256,8 +258,10 @@ function parseConnectTarget(raw: string | undefined): { hostname: string; port: 
 	const lastColon = raw.lastIndexOf(":");
 	if (lastColon <= 0) return null;
 	const hostname = stripBrackets(raw.slice(0, lastColon));
-	const port = Number.parseInt(raw.slice(lastColon + 1), 10);
+	const rawPort = raw.slice(lastColon + 1);
+	const port = Number.parseInt(rawPort, 10);
 	if (!hostname || !Number.isInteger(port) || port <= 0 || port > 65535) return null;
+	if (String(port) !== rawPort) return null;
 	return { hostname, port };
 }
 
