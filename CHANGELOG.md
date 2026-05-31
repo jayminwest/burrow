@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.9] - 2026-05-31
+
+Nightwatch patrol release: one surgical correctness fix from plan
+`pl-3a61`. No behavior changes for happy-path callers.
+
+### Fixed
+
+- **`fix(proxy/server)`** — port parsing in CONNECT and HTTP target
+  hosts now rejects trailing garbage (e.g. `host:80abc`) by mirroring
+  the canonical CLI parser shape (`String(port) === rawPort`), instead
+  of silently coercing via `parseInt`. Malformed targets now fail with
+  a clear validation error. (burrow-0229, #27)
+
 ## [0.3.8] - 2026-05-30
 
 Nightwatch patrol release: two surgical correctness/hygiene fixes from
