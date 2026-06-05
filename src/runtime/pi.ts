@@ -187,7 +187,7 @@ export const PI_ENV_PASSTHROUGH: readonly string[] = [
  * `src/registry/schema.ts:93`).
  */
 export const PI_PROVIDER_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
-	openai: ["OPENAI_API_KEY"],
+	openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
 	google: ["GEMINI_API_KEY"],
 	groq: ["GROQ_API_KEY"],
 	mistral: ["MISTRAL_API_KEY"],

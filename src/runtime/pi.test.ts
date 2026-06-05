@@ -423,9 +423,12 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 		]);
 	});
 
-	test("provider=openai → base + OPENAI_API_KEY", () => {
+	test("provider=openai → base + OPENAI_API_KEY + OPENAI_BASE_URL", () => {
 		const names = piEnvPassthrough({ frontmatter: { provider: "openai" } });
 		expect(names).toContain("OPENAI_API_KEY");
+		// Self-hosted / OpenAI-compatible endpoints need the base URL
+		// forwarded too (burrow-cae5).
+		expect(names).toContain("OPENAI_BASE_URL");
 		// Base still present so a host with both keys set keeps anthropic
 		// auth viable across resume / provider flips.
 		for (const base of PI_ENV_PASSTHROUGH) expect(names).toContain(base);
@@ -438,18 +441,18 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 	});
 
 	test("each non-anthropic provider opts in only its matching key", () => {
-		const cases: Array<[string, string]> = [
-			["openai", "OPENAI_API_KEY"],
+		const cases: Array<[string, readonly string[]]> = [
+			["openai", ["OPENAI_API_KEY", "OPENAI_BASE_URL"]],
 			// pi's "google" provider reads GEMINI_API_KEY (per pi-ai
 			// env-api-keys.js); there is no "gemini" provider name.
-			["google", "GEMINI_API_KEY"],
-			["groq", "GROQ_API_KEY"],
-			["mistral", "MISTRAL_API_KEY"],
-			["deepseek", "DEEPSEEK_API_KEY"],
+			["google", ["GEMINI_API_KEY"]],
+			["groq", ["GROQ_API_KEY"]],
+			["mistral", ["MISTRAL_API_KEY"]],
+			["deepseek", ["DEEPSEEK_API_KEY"]],
 		];
-		for (const [provider, key] of cases) {
+		for (const [provider, keys] of cases) {
 			const names = piEnvPassthrough({ frontmatter: { provider } });
-			expect(names).toEqual([...PI_ENV_PASSTHROUGH, key]);
+			expect(names).toEqual([...PI_ENV_PASSTHROUGH, ...keys]);
 		}
 	});
 
@@ -457,10 +460,12 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 		expect(piEnvPassthrough({ frontmatter: { provider: "OPENAI" } })).toEqual([
 			...PI_ENV_PASSTHROUGH,
 			"OPENAI_API_KEY",
+			"OPENAI_BASE_URL",
 		]);
 		expect(piEnvPassthrough({ frontmatter: { provider: "OpenAI" } })).toEqual([
 			...PI_ENV_PASSTHROUGH,
 			"OPENAI_API_KEY",
+			"OPENAI_BASE_URL",
 		]);
 	});
 
@@ -476,7 +481,7 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 		// names match pi's --provider vocabulary exactly; each value is the
 		// env var pi-ai's env-api-keys.js looks up for that provider.
 		expect(PI_PROVIDER_ENV_KEYS).toEqual({
-			openai: ["OPENAI_API_KEY"],
+			openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
 			google: ["GEMINI_API_KEY"],
 			groq: ["GROQ_API_KEY"],
 			mistral: ["MISTRAL_API_KEY"],
