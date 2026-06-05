@@ -1,6 +1,6 @@
 {
 	"name": "@os-eco/burrow-cli",
-	"version": "0.3.9",
+	"version": "0.3.10",
 	"description": "OS-isolated sandbox runtime for coding agents",
 	"type": "module",
 	"bin": {

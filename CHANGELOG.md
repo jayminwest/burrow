@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.10] - 2026-06-05
+
+Forward the OpenAI base URL so self-hosted / OpenAI-compatible models
+work under the pi runtime. One surgical fix from plan `pl-3ede`.
+
+### Fixed
+
+- **`fix(runtime/pi)`** — `PI_PROVIDER_ENV_KEYS["openai"]` now includes
+  `OPENAI_BASE_URL` alongside `OPENAI_API_KEY`, mirroring the existing
+  `ANTHROPIC_BASE_URL` passthrough. Self-hosted and OpenAI-compatible
+  endpoints get their base URL forwarded into the sandbox. Thanks to
+  @ConradMearns for the report. (burrow-cae5, #13, #30)
+
 ## [0.3.9] - 2026-05-31
 
 Nightwatch patrol release: one surgical correctness fix from plan
