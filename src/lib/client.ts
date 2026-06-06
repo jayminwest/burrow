@@ -86,6 +86,12 @@ export interface RunCreateInput {
 	agentId: string;
 	prompt: string;
 	metadata?: unknown;
+	/**
+	 * When set, the dispatcher resumes the prior run's agent session instead
+	 * of spawning a fresh one (subject to eligibility checks). Persisted on the
+	 * run row via `RunsRepo.enqueue` (`resume_of_run_id` column).
+	 */
+	resumeOfRunId?: string;
 }
 
 /**
@@ -297,6 +303,7 @@ export class RunsClient {
 			agentId: input.agentId,
 			prompt: input.prompt,
 			metadata: input.metadata,
+			resumeOfRunId: input.resumeOfRunId,
 		});
 		this.onCreated?.(run.id);
 		return run;

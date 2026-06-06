@@ -397,7 +397,11 @@
             "type": "string",
             "minLength": 1
           },
-          "metadata": {}
+          "metadata": {},
+          "resumeOfRunId": {
+            "description": "When set, the dispatcher resumes the agent session from this prior run instead of spawning a fresh one, subject to eligibility checks (runtime supports resume; the prior run exists, succeeded, and shares the same burrow + agent). Persisted on the new run's `resume_of_run_id` column.",
+            "type": "string"
+          }
         },
         "required": [
           "agentId",
