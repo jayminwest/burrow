@@ -22,6 +22,7 @@
  * doesn't have to reimplement it.
  */
 
+import { RUN_TERMINAL_STATES } from "../core/state-machine.ts";
 import type { Burrow, Run, RunEvent } from "../core/types.ts";
 import type { Repos } from "../db/repos/index.ts";
 import { appendAndPublish } from "../events/publish.ts";
@@ -96,6 +97,43 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		};
 	}
 
+	// Resume eligibility (burrow-c386). When the run carries a
+	// `resumeOfRunId`, validate that we can actually continue the prior
+	// session before spending any work (inbox claim, prepareWorkspace,
+	// spawn). Each failure mode collapses to a structured failed outcome
+	// rather than throwing so the run loop's catch path doesn't mask the
+	// reason. Validation runs before the inbox claim below so a rejected
+	// resume never consumes pending messages.
+	let priorRun: Run | undefined;
+	if (run.resumeOfRunId) {
+		if (typeof runtime.buildResumeCommand !== "function") {
+			return {
+				state: "failed",
+				errorMessage: `agent '${runtime.id}' does not support resume`,
+			};
+		}
+		const prior = repos.runs.get(run.resumeOfRunId);
+		if (!prior) {
+			return {
+				state: "failed",
+				errorMessage: `resume target run '${run.resumeOfRunId}' does not exist`,
+			};
+		}
+		if (prior.burrowId !== burrow.id) {
+			return {
+				state: "failed",
+				errorMessage: `resume target run '${prior.id}' belongs to burrow ${prior.burrowId}, not ${burrow.id}`,
+			};
+		}
+		if (!RUN_TERMINAL_STATES.has(prior.state)) {
+			return {
+				state: "failed",
+				errorMessage: `resume target run '${prior.id}' is in non-terminal state '${prior.state}'`,
+			};
+		}
+		priorRun = prior;
+	}
+
 	const installCheckFn = input.installCheck ?? ((rt) => rt.installCheck());
 	const install = await installCheckFn(runtime);
 	if (!install.installed) {
@@ -128,7 +166,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 	}
 
 	const frontmatter = readFrontmatter(run.metadataJson);
-	const command = runtime.buildSpawnCommand({
+	const spawnCtx = {
 		burrow,
 		run,
 		prompt: run.prompt,
@@ -136,7 +174,13 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		envResolved: profile.setEnv ?? {},
 		workspacePath: burrow.workspacePath,
 		...(frontmatter ? { frontmatter } : {}),
-	});
+	};
+	// `priorRun` is only set when resume validation above passed, which
+	// also guarantees `buildResumeCommand` is defined.
+	const command =
+		priorRun && runtime.buildResumeCommand
+			? runtime.buildResumeCommand({ ...spawnCtx, priorRun })
+			: runtime.buildSpawnCommand(spawnCtx);
 
 	// Function-form `envPassthrough` (burrow-6f3f): re-resolve with the
 	// run's actual frontmatter so a runtime that multiplexes over providers

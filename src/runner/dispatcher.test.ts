@@ -318,6 +318,190 @@ describe("startRunDispatcher", () => {
 	});
 });
 
+// Resume routing + eligibility validation (burrow-c386 / pl-a456 step 3).
+//
+// When a run carries `resumeOfRunId`, the dispatcher validates the resume
+// is actually possible before doing any work, then routes the spawn through
+// `buildResumeCommand(priorRun)` instead of `buildSpawnCommand`. Each failure
+// mode collapses to a structured `failed` outcome (never a throw) so the run
+// loop surfaces the reason instead of a generic crash.
+describe("startRunDispatcher · resume routing (burrow-c386)", () => {
+	let dataDir: string;
+	let client: Client;
+
+	beforeEach(async () => {
+		dataDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-resume-"));
+		client = await Client.open({ dataDir, configDir: dataDir });
+	});
+
+	afterEach(async () => {
+		await client.close();
+		rmSync(dataDir, { recursive: true, force: true });
+	});
+
+	function seedTerminalRun(burrowId: string, agentId = "fake"): string {
+		const prior = client.repos.runs.enqueue({ burrowId, agentId, prompt: "prior" });
+		client.repos.runs.markRunning(prior.id);
+		client.repos.runs.finalize(prior.id, { state: "succeeded", exitCode: 0 });
+		return prior.id;
+	}
+
+	test("happy path: resume run routes to buildResumeCommand with priorRun", async () => {
+		const burrow = seedActiveBurrow(client);
+		let resumePriorId: string | undefined;
+		let spawnCalled = false;
+		client.agents.register(
+			fakeRuntime({
+				supportsResume: true,
+				buildSpawnCommand: () => {
+					spawnCalled = true;
+					return { argv: ["fake-spawn"] };
+				},
+				buildResumeCommand: (ctx) => {
+					resumePriorId = ctx.priorRun.id;
+					return { argv: ["fake-resume"] };
+				},
+			}),
+		);
+		const priorId = seedTerminalRun(burrow.id);
+
+		const calls: CollectedSpawn[] = [];
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ calls, stdoutLines: ["ok"] }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "resume me",
+			resumeOfRunId: priorId,
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		expect(resumePriorId).toBe(priorId);
+		expect(spawnCalled).toBe(false);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.command.argv).toEqual(["fake-resume"]);
+	});
+
+	test("agent without buildResumeCommand → failed (does not support resume)", async () => {
+		const burrow = seedActiveBurrow(client);
+		// fakeRuntime() has no buildResumeCommand.
+		client.agents.register(fakeRuntime());
+		const priorId = seedTerminalRun(burrow.id);
+
+		const calls: CollectedSpawn[] = [];
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ calls }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "p",
+			resumeOfRunId: priorId,
+		});
+		await waitFor(() => client.runs.get(run.id).state === "failed");
+		await dispatcher.stop();
+
+		expect(calls).toHaveLength(0);
+		expect(client.runs.get(run.id).errorMessage).toContain("does not support resume");
+	});
+
+	test("missing prior run → failed (resume target does not exist)", async () => {
+		const burrow = seedActiveBurrow(client);
+		client.agents.register(fakeRuntime({ buildResumeCommand: () => ({ argv: ["r"] }) }));
+
+		const calls: CollectedSpawn[] = [];
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ calls }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "p",
+			resumeOfRunId: "run_ghost",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "failed");
+		await dispatcher.stop();
+
+		expect(calls).toHaveLength(0);
+		const msg = client.runs.get(run.id).errorMessage ?? "";
+		expect(msg).toContain("run_ghost");
+		expect(msg).toContain("does not exist");
+	});
+
+	test("prior run in another burrow → failed (cross-burrow resume rejected)", async () => {
+		const burrowA = seedActiveBurrow(client, "/ws-a");
+		const burrowB = seedActiveBurrow(client, "/ws-b");
+		client.agents.register(fakeRuntime({ buildResumeCommand: () => ({ argv: ["r"] }) }));
+		const priorInB = seedTerminalRun(burrowB.id);
+
+		const calls: CollectedSpawn[] = [];
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ calls }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrowA.id,
+			agentId: "fake",
+			prompt: "p",
+			resumeOfRunId: priorInB,
+		});
+		await waitFor(() => client.runs.get(run.id).state === "failed");
+		await dispatcher.stop();
+
+		expect(calls).toHaveLength(0);
+		expect(client.runs.get(run.id).errorMessage).toContain(burrowB.id);
+	});
+
+	test("prior run not yet terminal → failed (non-terminal state rejected)", async () => {
+		const burrow = seedActiveBurrow(client);
+		client.agents.register(fakeRuntime({ buildResumeCommand: () => ({ argv: ["r"] }) }));
+
+		const calls: CollectedSpawn[] = [];
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ calls }),
+		});
+		// Start before seeding the running prior so the startup recovery
+		// sweep (which fails stale running rows) can't move it to terminal.
+		dispatcher.start();
+
+		// Prior run left in `running` state (no finalize).
+		const prior = client.repos.runs.enqueue({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "prior",
+		});
+		client.repos.runs.markRunning(prior.id);
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "p",
+			resumeOfRunId: prior.id,
+		});
+		await waitFor(() => client.runs.get(run.id).state === "failed");
+		await dispatcher.stop();
+
+		expect(calls).toHaveLength(0);
+		const msg = client.runs.get(run.id).errorMessage ?? "";
+		expect(msg).toContain("non-terminal");
+		expect(msg).toContain("running");
+	});
+});
+
 // piRuntime end-to-end via golden fixtures (burrow-56bb / pl-5198 step 5).
 //
 // Drives a full enqueue → claim → spawn → parse → persist roundtrip with the
