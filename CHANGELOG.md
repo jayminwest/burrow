@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.12] - 2026-06-06
+
+Ships the `pi-chat` AgentRuntime — a conversational, stdin-held variant
+of the `pi` runtime (Leveret §0 phase 1, parent `burrow-f375`). Same pi
+binary and RPC wire as plain `pi`, but extensions are enabled, stdin is
+held open past `agent_end` so mid-run steering drives subsequent
+operator turns, and `extension_ui_request` envelopes are auto-declined
+so an interactive extension can't stall a run. Plain `pi` runs are
+byte-identical to their prior argv shape.
+
+### Added
+
+- **`feat(runtime)`** — new built-in `pi-chat` runtime
+  (`src/runtime/pi-chat.ts`), fifth entry in `BUILT_IN_RUNTIMES`.
+  Reuses pi's argv builder, stdin framing, parser, session storage, and
+  env-passthrough; the deltas are extensions enabled
+  (`buildPiArgv(..., { extensions: true })`), a defined-but-never-true
+  `shouldCloseStdinOnEvent` (opts into the dispatcher's stdin-hold path
+  without ever closing on a parsed event), and `autoRespondToEvent`
+  declining every `extension_ui_request` with
+  `{type:"extension_ui_response", id, cancelled:true}`. (burrow-f375,
+  #40)
+- **`feat(runner)`** — optional `AgentRuntime.autoRespondToEvent(event)`
+  hook: after each persisted event, the dispatcher gives the runtime a
+  chance to synthesize a stdin reply, written verbatim via
+  `SpawnResult.writeStdin`. Gated on stdin-hold + a live `writeStdin`
+  sink so spawn-per-turn runtimes (claude-code, sapling, codex) skip
+  the path entirely; write failures are swallowed so a failed
+  auto-reply never fails an otherwise successful run. (burrow-aea0,
+  #39)
+- **`feat(runtime/pi)`** — `EXA_API_KEY` joins `PI_ENV_PASSTHROUGH` so
+  pi's built-in Exa web-search extension authenticates under pi-chat;
+  plain `pi` runs with `--no-extensions` and simply ignores it.
+  Forwarded only when set on the host, never via argv. (#38)
+
+### Changed
+
+- **`refactor(runtime/pi)`** — `buildPiArgv` gains a
+  `BuildPiArgvOptions.extensions` seam that elides `--no-extensions`
+  when the caller can answer pi's extension UI RPC; the no-options call
+  site stays byte-identical to the locked `PI_FORCED_ARGV` shape. New
+  `PI_FORCED_ARGV_WITH_EXTENSIONS` constant locks the extensions-on
+  prefix for pi-chat and its tests. (burrow-12ba, #37)
+- **`build(deps)`** — commander 14.0.3 → 15.0.0. (#29)
+
 ## [0.3.11] - 2026-06-06
 
 Wire the `resumeOfRunId` seam end-to-end so a run can resume a prior
@@ -907,7 +952,16 @@ coding agents on Linux (`bwrap`) and macOS (`sandbox-exec`).
   and agents (previously empty, breaking PATH inside the sandbox).
 - `burrow destroy` drops the per-burrow branch when tearing down a worktree.
 
-[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.3.3...HEAD
+[Unreleased]: https://github.com/jayminwest/burrow/compare/v0.3.12...HEAD
+[0.3.12]: https://github.com/jayminwest/burrow/compare/v0.3.11...v0.3.12
+[0.3.11]: https://github.com/jayminwest/burrow/compare/v0.3.10...v0.3.11
+[0.3.10]: https://github.com/jayminwest/burrow/compare/v0.3.9...v0.3.10
+[0.3.9]: https://github.com/jayminwest/burrow/compare/v0.3.8...v0.3.9
+[0.3.8]: https://github.com/jayminwest/burrow/compare/v0.3.7...v0.3.8
+[0.3.7]: https://github.com/jayminwest/burrow/compare/v0.3.6...v0.3.7
+[0.3.6]: https://github.com/jayminwest/burrow/compare/v0.3.5...v0.3.6
+[0.3.5]: https://github.com/jayminwest/burrow/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/jayminwest/burrow/compare/v0.3.3...v0.3.4
 [0.3.3]: https://github.com/jayminwest/burrow/compare/v0.3.2...v0.3.3
 [0.3.2]: https://github.com/jayminwest/burrow/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/jayminwest/burrow/compare/v0.3.0...v0.3.1
