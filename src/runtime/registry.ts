@@ -18,6 +18,7 @@ import { claudeCodeRuntime } from "./claude-code.ts";
 import { codexRuntime } from "./codex.ts";
 import { loadAgentConfig } from "./declarative.ts";
 import { piRuntime } from "./pi.ts";
+import { piChatRuntime } from "./pi-chat.ts";
 import type { AgentRuntime } from "./runtime.ts";
 import { saplingRuntime } from "./sapling.ts";
 
@@ -26,6 +27,7 @@ export const BUILT_IN_RUNTIMES: readonly AgentRuntime[] = [
 	saplingRuntime,
 	codexRuntime,
 	piRuntime,
+	piChatRuntime,
 ] as const;
 
 export class AgentRegistry {
