@@ -11,6 +11,7 @@ import {
 	PI_DEFAULT_PROVIDER,
 	PI_ENV_PASSTHROUGH,
 	PI_FORCED_ARGV,
+	PI_FORCED_ARGV_WITH_EXTENSIONS,
 	PI_PROVIDER_ENV_KEYS,
 	PI_SESSION_DIR,
 	piEnvPassthrough,
@@ -312,11 +313,63 @@ describe("buildPiArgv", () => {
 		expect(argv[modelIdx + 1]).toBe("gpt-4o");
 	});
 
+	test("PI_FORCED_ARGV_WITH_EXTENSIONS is PI_FORCED_ARGV minus --no-extensions (burrow-12ba)", () => {
+		// Locked sibling exposed for pi-chat — same flags as the plain-pi
+		// prefix with the single `--no-extensions` entry elided so the
+		// chat runtime can answer pi's interactive `extension_ui_request`
+		// RPC. Asserted here to keep the two constants in lockstep.
+		expect([...PI_FORCED_ARGV_WITH_EXTENSIONS]).toEqual([
+			"pi",
+			"--mode",
+			"rpc",
+			"--session-dir",
+			PI_SESSION_DIR,
+			"--offline",
+			"--provider",
+			PI_DEFAULT_PROVIDER,
+		]);
+		expect([...PI_FORCED_ARGV_WITH_EXTENSIONS]).toEqual(
+			PI_FORCED_ARGV.filter((flag) => flag !== "--no-extensions"),
+		);
+	});
+
+	test("extensions: true elides --no-extensions but keeps every other flag (burrow-12ba)", () => {
+		// pi-chat seam — the runtime that can drive pi's extension UI surface
+		// (autoRespondToEvent declines extension_ui_request) renders with
+		// extensions enabled. Argv stays byte-identical to plain pi modulo
+		// the single --no-extensions entry.
+		const argv = buildPiArgv(undefined, { extensions: true });
+		expect(argv).toEqual([...PI_FORCED_ARGV_WITH_EXTENSIONS, "--model", PI_DEFAULT_MODEL]);
+		expect(argv).not.toContain("--no-extensions");
+		// Every other locked flag from PI_FORCED_ARGV is still present.
+		for (const flag of PI_FORCED_ARGV) {
+			if (flag === "--no-extensions") continue;
+			expect(argv).toContain(flag);
+		}
+	});
+
+	test("extensions: true composes with provider + model frontmatter overrides", () => {
+		const argv = buildPiArgv({ provider: "openai", model: "gpt-4o" }, { extensions: true });
+		expect(argv).not.toContain("--no-extensions");
+		const providerIdx = argv.indexOf("--provider");
+		expect(argv[providerIdx + 1]).toBe("openai");
+		const modelIdx = argv.indexOf("--model");
+		expect(argv[modelIdx + 1]).toBe("gpt-4o");
+	});
+
+	test("extensions: false is byte-identical to the no-options call (default keeps --no-extensions)", () => {
+		expect(buildPiArgv(undefined, { extensions: false })).toEqual(buildPiArgv());
+		expect(buildPiArgv({ provider: "openai" }, { extensions: false })).toEqual(
+			buildPiArgv({ provider: "openai" }),
+		);
+	});
+
 	test("PI_FORCED_ARGV stays bit-for-bit identical (the constant is the no-override default)", () => {
 		// Constant must not be mutated across buildPiArgv calls — guards
 		// against an accidental in-place [PI_FORCED_ARGV.length-1] = ...
 		// (the helper uses a copy, but pin the invariant explicitly).
 		buildPiArgv({ provider: "openai", model: "gpt-4o" });
+		buildPiArgv({ provider: "openai" }, { extensions: true });
 		expect([...PI_FORCED_ARGV]).toEqual([
 			"pi",
 			"--mode",

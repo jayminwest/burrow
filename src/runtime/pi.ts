@@ -125,8 +125,13 @@ export const PI_SESSION_DIR = ".pi/sessions";
 export const PI_DEFAULT_PROVIDER = "anthropic";
 
 /**
- * Locked prefix of `pi`'s argv when no frontmatter overrides are in play.
- * The trailing `--model <PI_DEFAULT_MODEL>` pair is appended in
+ * Locked prefix of plain `pi`'s argv when no frontmatter overrides are in
+ * play. This represents the *extensions-disabled* shape baked into the
+ * spawn-per-turn runtime — `--no-extensions` is forced here because the
+ * dispatcher has no path to answer pi's interactive `extension_ui_request`
+ * RPC, so an unanswered prompt would hang the run (see `extensions` option
+ * on `buildPiArgv` and burrow-12ba for the pi-chat seam that opts back
+ * in). The trailing `--model <PI_DEFAULT_MODEL>` pair is appended in
  * `buildSpawnCommand` — split out so the test that enforces flag presence
  * can assert the prefix without coupling to the exact pinned model. When
  * `SpawnContext.frontmatter.provider` is non-empty `buildPiArgv` swaps the
@@ -140,6 +145,25 @@ export const PI_FORCED_ARGV: readonly string[] = [
 	"--session-dir",
 	PI_SESSION_DIR,
 	"--no-extensions",
+	"--offline",
+	"--provider",
+	PI_DEFAULT_PROVIDER,
+] as const;
+
+/**
+ * Sibling of `PI_FORCED_ARGV` with `--no-extensions` elided — the argv
+ * shape pi-chat (and any future stdin-held runtime that can answer
+ * `extension_ui_request` envelopes) renders. Exposed as a constant so the
+ * pi-chat runtime and its tests can assert against the locked prefix
+ * without duplicating the flag list. Kept in lockstep with
+ * `PI_FORCED_ARGV` modulo the single `--no-extensions` entry.
+ */
+export const PI_FORCED_ARGV_WITH_EXTENSIONS: readonly string[] = [
+	PI_BIN,
+	"--mode",
+	"rpc",
+	"--session-dir",
+	PI_SESSION_DIR,
 	"--offline",
 	"--provider",
 	PI_DEFAULT_PROVIDER,
@@ -290,6 +314,18 @@ export const piRuntime: AgentRuntime = {
 };
 
 /**
+ * Options for `buildPiArgv` (burrow-12ba). The single knob today is
+ * `extensions`: opting in elides the `--no-extensions` flag so a runtime
+ * that *can* answer pi's interactive `extension_ui_request` RPC (notably
+ * pi-chat, which auto-declines via `autoRespondToEvent`) gets pi's full
+ * extension surface. Default is `extensions: false` — plain `pi` keeps its
+ * locked, byte-identical argv shape (see `PI_FORCED_ARGV`).
+ */
+export interface BuildPiArgvOptions {
+	extensions?: boolean;
+}
+
+/**
  * Render pi's argv with optional per-run frontmatter overrides (burrow-b5b4).
  * When `frontmatter.provider` is non-empty (after trim) it replaces the
  * default `PI_DEFAULT_PROVIDER` slot in the locked prefix; when unset, the
@@ -297,12 +333,22 @@ export const piRuntime: AgentRuntime = {
  * `--model`: a non-empty `frontmatter.model` substitutes for
  * `PI_DEFAULT_MODEL`. `envPassthrough` is intentionally not adjusted here —
  * projects opt non-anthropic provider keys in via `burrow.toml [env]`
- * (mx-d46d5d). Exported for unit tests.
+ * (mx-d46d5d).
+ *
+ * The optional `options.extensions` seam (burrow-12ba) elides
+ * `--no-extensions` when the caller can drive pi's extension UI surface.
+ * Plain pi never sets this — its argv is locked to `PI_FORCED_ARGV` — so
+ * the no-options call site remains byte-identical to the V1 shape.
+ * Exported for unit tests.
  */
-export function buildPiArgv(frontmatter?: AgentFrontmatter): string[] {
-	const argv = [...PI_FORCED_ARGV];
-	const provider = nonEmpty(frontmatter?.provider);
-	if (provider) argv[argv.length - 1] = provider;
+export function buildPiArgv(
+	frontmatter?: AgentFrontmatter,
+	options?: BuildPiArgvOptions,
+): string[] {
+	const withExtensions = options?.extensions === true;
+	const argv: string[] = [PI_BIN, "--mode", "rpc", "--session-dir", PI_SESSION_DIR];
+	if (!withExtensions) argv.push("--no-extensions");
+	argv.push("--offline", "--provider", nonEmpty(frontmatter?.provider) ?? PI_DEFAULT_PROVIDER);
 	const model = nonEmpty(frontmatter?.model) ?? PI_DEFAULT_MODEL;
 	argv.push("--model", model);
 	return argv;
