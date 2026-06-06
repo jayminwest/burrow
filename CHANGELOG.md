@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.11] - 2026-06-06
+
+Wire the `resumeOfRunId` seam end-to-end so a run can resume a prior
+agent session through the public API. The resume machinery already
+existed (`buildResumeCommand`, `supportsResume`, the `resume_of_run_id`
+column) but nothing wired it; this connects all three layers. From plan
+`pl-a456`. Thanks to the GH #21 author for the analysis pinpointing the
+unwired seam.
+
+### Added
+
+- **`feat(server)`** — `POST /burrows/:id/runs` accepts an optional
+  `resumeOfRunId`; `createRun` reads it, `CreateRunBodySchema` documents
+  it, and it is persisted on the run row via `RunsRepo.enqueue`. OpenAPI
+  golden regenerated. (burrow-6a65)
+- **`feat(lib)`** — `RunCreateInput` (in-process) and
+  `HttpRunCreateInput` (HTTP) both carry `resumeOfRunId`;
+  `client.runs.create` and the HTTP client forward it with
+  in-process/HTTP parity. (burrow-5704)
+- **`feat(runner)`** — when `run.resumeOfRunId` is set, `dispatchRun`
+  validates resume eligibility (runtime `supportsResume`; prior run
+  exists, succeeded, same burrowId, same agentId) and routes to
+  `runtime.buildResumeCommand(priorRun)`; each ineligibility fails fast
+  with a distinct, structured `errorMessage` rather than silently
+  falling back to a fresh spawn. (burrow-c386, #21)
+
 ## [0.3.10] - 2026-06-05
 
 Forward the OpenAI base URL so self-hosted / OpenAI-compatible models
