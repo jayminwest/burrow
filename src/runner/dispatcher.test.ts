@@ -1325,3 +1325,198 @@ describe("startRunDispatcher · mid-run steering (burrow-250d)", () => {
 		expect(stored.state).toBe("unread");
 	});
 });
+
+// Auto-reply hook (burrow-aea0, pl-1ee7 step 3): when a stdin-holding
+// runtime defines `autoRespondToEvent`, the dispatcher feeds every
+// parser-emitted event through the hook *after* persistence and writes
+// any returned reply to the open stdin via `SpawnResult.writeStdin`.
+// The canonical consumer is pi-chat declining an `extension_ui_request`,
+// but the hook is generic — this test uses a fake runtime to lock the
+// contract independently of any built-in runtime's parser.
+describe("startRunDispatcher · auto-reply hook (burrow-aea0)", () => {
+	let dataDir: string;
+	let client: Client;
+
+	beforeEach(async () => {
+		dataDir = mkdtempSync(join(tmpdir(), "burrow-dispatcher-autoreply-"));
+		client = await Client.open({ dataDir, configDir: dataDir });
+	});
+
+	afterEach(async () => {
+		await client.close();
+		rmSync(dataDir, { recursive: true, force: true });
+	});
+
+	interface AutoReplyCapture {
+		holdStdin?: boolean;
+		writes: string[];
+		closeStdinCalls: number;
+	}
+
+	// Spawn fake that emits a scripted set of stdout lines and stays alive
+	// until closeStdin is called. Each line goes through parseEvents and
+	// then through the runtime's autoRespondToEvent hook — we capture
+	// every writeStdin chunk to assert ordering + content.
+	function scriptedHoldingSpawn(stdoutLines: string[], capture: AutoReplyCapture): SpawnFn {
+		return async (_profile, command) => {
+			capture.holdStdin = command.holdStdin;
+			const encoder = new TextEncoder();
+			const blob = stdoutLines.map((l) => `${l}\n`).join("");
+			const stdout = new ReadableStream<Uint8Array>({
+				start(controller) {
+					if (blob.length > 0) controller.enqueue(encoder.encode(blob));
+					controller.close();
+				},
+			});
+			const stderr = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.close();
+				},
+			});
+			let resolveExit!: (n: number) => void;
+			const exited = new Promise<number>((r) => {
+				resolveExit = r;
+			});
+			return {
+				pid: 7777,
+				stdout,
+				stderr,
+				exited,
+				cancel: () => resolveExit(130),
+				closeStdin: async () => {
+					capture.closeStdinCalls += 1;
+					resolveExit(0);
+				},
+				writeStdin: async (chunk: string) => {
+					capture.writes.push(chunk);
+				},
+			};
+		};
+	}
+
+	test("autoRespondToEvent writes its reply to the held stdin, on the matching event only", async () => {
+		const burrow = seedActiveBurrow(client);
+		// Parser emits one event per stdout line, kind == payload.kind.
+		// The runtime auto-replies only when the event kind is `request`;
+		// the `end` line trips the stdin-close trigger.
+		const runtime = fakeRuntime({
+			id: "autoreply",
+			parseEvents: (line) => {
+				const payload = JSON.parse(line) as { kind: string; id?: string };
+				return [{ kind: payload.kind, stream: "stdout", payload }];
+			},
+			shouldCloseStdinOnEvent: (ev) => ev.kind === "end",
+			autoRespondToEvent: (ev) => {
+				if (ev.kind !== "request") return undefined;
+				const payload = ev.payload as { id?: string };
+				return {
+					stdin: `${JSON.stringify({ type: "response", id: payload.id ?? null, cancelled: true })}\n`,
+				};
+			},
+		});
+		client.agents.register(runtime);
+
+		const lines = [
+			JSON.stringify({ kind: "text", text: "hi" }),
+			JSON.stringify({ kind: "request", id: "req-1" }),
+			JSON.stringify({ kind: "text", text: "bye" }),
+			JSON.stringify({ kind: "request", id: "req-2" }),
+			JSON.stringify({ kind: "end" }),
+		];
+		const capture: AutoReplyCapture = { writes: [], closeStdinCalls: 0 };
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: scriptedHoldingSpawn(lines, capture),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "autoreply",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded", 2000);
+		await dispatcher.stop();
+
+		// Stdin-hold contract propagated.
+		expect(capture.holdStdin).toBe(true);
+		// One reply per `request` event, in stdout order, and nothing for
+		// `text` / `end`.
+		expect(capture.writes).toHaveLength(2);
+		expect(JSON.parse(capture.writes[0]?.trimEnd() ?? "")).toEqual({
+			type: "response",
+			id: "req-1",
+			cancelled: true,
+		});
+		expect(JSON.parse(capture.writes[1]?.trimEnd() ?? "")).toEqual({
+			type: "response",
+			id: "req-2",
+			cancelled: true,
+		});
+		expect(capture.writes[0]?.endsWith("\n")).toBe(true);
+		expect(capture.writes[1]?.endsWith("\n")).toBe(true);
+		// stdin closed exactly once on the `end` trigger.
+		expect(capture.closeStdinCalls).toBe(1);
+	});
+
+	test("runtime without autoRespondToEvent skips the hook (no writeStdin)", async () => {
+		const burrow = seedActiveBurrow(client);
+		// Holds stdin (so writeStdin exists and would be called if the hook
+		// were defined), but defines no autoRespondToEvent — dispatcher
+		// must leave writeStdin untouched.
+		const runtime = fakeRuntime({
+			id: "no-autoreply",
+			shouldCloseStdinOnEvent: (ev) => ev.kind === "text",
+		});
+		client.agents.register(runtime);
+
+		const capture: AutoReplyCapture = { writes: [], closeStdinCalls: 0 };
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: scriptedHoldingSpawn(["trigger"], capture),
+		});
+		dispatcher.start();
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "no-autoreply",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded", 2000);
+		await dispatcher.stop();
+
+		expect(capture.writes).toHaveLength(0);
+		expect(capture.closeStdinCalls).toBe(1);
+	});
+
+	test("non-holdStdin runtime: autoRespondToEvent is silently ignored", async () => {
+		const burrow = seedActiveBurrow(client);
+		// Defines autoRespondToEvent but NOT shouldCloseStdinOnEvent. The
+		// dispatcher requires stdin-hold to be effective; otherwise the
+		// hook is dead code (no writeStdin available, stdin already closed).
+		let hookCalled = false;
+		const runtime = fakeRuntime({
+			id: "autoreply-no-hold",
+			autoRespondToEvent: (_ev) => {
+				hookCalled = true;
+				return { stdin: "should-not-write\n" };
+			},
+		});
+		client.agents.register(runtime);
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ stdoutLines: ["anything"] }),
+		});
+		dispatcher.start();
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "autoreply-no-hold",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		expect(hookCalled).toBe(false);
+	});
+});

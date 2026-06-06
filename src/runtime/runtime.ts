@@ -178,6 +178,27 @@ export interface AgentRuntime {
 	encodeSteeringMessage?(message: Message): { stdin: string } | undefined;
 
 	/**
+	 * Optional auto-reply hook (burrow-aea0). Invoked by the dispatcher once
+	 * per parser-emitted event *after* the event is persisted, before the
+	 * `shouldCloseStdinOnEvent` predicate is checked. If the hook returns
+	 * `{stdin}`, the dispatcher writes that string verbatim to the still-open
+	 * child stdin via `SpawnResult.writeStdin` — the runtime owns its own
+	 * framing (e.g. trailing `\n` for NDJSON-RPC). Returning `undefined`
+	 * declines (the dispatcher does nothing for this event).
+	 *
+	 * Generic and runtime-agnostic: the canonical use case is replying to a
+	 * mid-run request envelope the runtime emitted (e.g. pi-chat's
+	 * `extension_ui_request` → cancelled `extension_ui_response`). Only
+	 * effective when the runtime also declares `shouldCloseStdinOnEvent` (so
+	 * stdin is actually held open) and the spawn result exposes
+	 * `writeStdin`; otherwise the hook is silently skipped.
+	 *
+	 * Best-effort: write failures are swallowed so an auto-reply hiccup
+	 * never fails an otherwise successful run.
+	 */
+	autoRespondToEvent?(event: RuntimeEvent): { stdin: string } | undefined;
+
+	/**
 	 * Host env var names this runtime needs forwarded into the sandbox for its
 	 * CLI to authenticate or configure itself. `burrow up` unions every
 	 * effective agent's list with the project's `[env]`-derived passthrough
