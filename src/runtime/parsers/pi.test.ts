@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { encodeExtensionUiDecline } from "../pi-chat.ts";
 import { parsePiEvents } from "./pi.ts";
 
 const GOLDEN_DIR = join(import.meta.dir, "__golden__");
@@ -240,6 +241,65 @@ describe("parsePiEvents", () => {
 		expect(events[0]?.stream).toBe("system");
 	});
 
+	test("extension_ui_request preserves id + method in payload so pi-chat can echo id", () => {
+		// pi 0.77 always tags dialog requests with a freshly-generated UUID id;
+		// the host (pi-chat runtime) must echo that exact id back in its
+		// extension_ui_response. The parser must therefore preserve id + method
+		// verbatim in the state_change payload.
+		const envelope = {
+			type: "extension_ui_request",
+			id: "840f272d-bc3d-4039-b132-83c4fb70360b",
+			method: "confirm",
+			title: "burrow-fixture",
+			message: "approve this fixture run?",
+			timeout: 1500,
+		};
+		const events = parsePiEvents(JSON.stringify(envelope));
+		expect(events).toHaveLength(1);
+		expect(events[0]?.kind).toBe("state_change");
+		expect(events[0]?.stream).toBe("system");
+		expect(events[0]?.payload).toEqual(envelope);
+	});
+
+	test("auto-answer extension_ui_response wire shape matches pi-chat's encoder", () => {
+		// Lock the wire shape pi-chat's autoRespondToEvent hook writes back to
+		// pi's stdin for any extension_ui_request envelope flowing through the
+		// parser. Trailing LF is mandatory — pi reads stdin as LF-framed JSONL
+		// (mx-2b9f83). V1 always cancels; allowlisting confirmed:true is out of
+		// scope (burrow-f375).
+		const envelope = {
+			type: "extension_ui_request",
+			id: "840f272d-bc3d-4039-b132-83c4fb70360b",
+			method: "confirm",
+		};
+		const blob = encodeExtensionUiDecline(envelope);
+		expect(blob.endsWith("\n")).toBe(true);
+		const parsed = JSON.parse(blob.trim()) as Record<string, unknown>;
+		expect(parsed).toEqual({
+			type: "extension_ui_response",
+			id: envelope.id,
+			cancelled: true,
+		});
+	});
+
+	test("tool_execution_update (pi 0.77 vocab delta) is telemetry on system", () => {
+		// pi 0.77 added tool_execution_update between tool_execution_start and
+		// tool_execution_end to stream incremental progress. Treat it as
+		// best-effort telemetry, mirroring the message_update collapse rule.
+		const events = parsePiEvents(
+			JSON.stringify({
+				type: "tool_execution_update",
+				toolCallId: "toolu_01",
+				toolName: "bash",
+				update: { stdout: "partial..." },
+			}),
+		);
+		expect(events).toHaveLength(1);
+		expect(events[0]?.kind).toBe("telemetry");
+		expect(events[0]?.stream).toBe("system");
+		expect(events[0]?.payload).toMatchObject({ type: "tool_execution_update" });
+	});
+
 	test("unknown envelope types are preserved as state_change (additive vocab)", () => {
 		const events = parsePiEvents(JSON.stringify({ type: "future_event_kind", payload: { a: 1 } }));
 		expect(events).toHaveLength(1);
@@ -305,8 +365,8 @@ describe("parsePiEvents", () => {
 		expect(events[0]?.payload).toMatchObject({ block: { type: "exotic_future" } });
 	});
 
-	describe("golden fixture: pi-v0.74.0-anthropic-success.jsonl", () => {
-		const lines = readFileSync(join(GOLDEN_DIR, "pi-v0.74.0-anthropic-success.jsonl"), "utf8")
+	describe("golden fixture: pi-v0.77.0-anthropic-success.jsonl", () => {
+		const lines = readFileSync(join(GOLDEN_DIR, "pi-v0.77.0-anthropic-success.jsonl"), "utf8")
 			.split("\n")
 			.filter((l) => l.length > 0);
 
@@ -360,8 +420,8 @@ describe("parsePiEvents", () => {
 		});
 	});
 
-	describe("golden fixture: pi-v0.74.0-anthropic-tools.jsonl", () => {
-		const lines = readFileSync(join(GOLDEN_DIR, "pi-v0.74.0-anthropic-tools.jsonl"), "utf8")
+	describe("golden fixture: pi-v0.77.0-anthropic-tools.jsonl", () => {
+		const lines = readFileSync(join(GOLDEN_DIR, "pi-v0.77.0-anthropic-tools.jsonl"), "utf8")
 			.split("\n")
 			.filter((l) => l.length > 0);
 
@@ -404,6 +464,57 @@ describe("parsePiEvents", () => {
 				expect(ev.kind).toBe("state_change");
 				expect(ev.stream).toBe("system");
 			}
+		});
+	});
+
+	describe("golden fixture: pi-v0.77.0-anthropic-extension-ui.jsonl", () => {
+		const lines = readFileSync(join(GOLDEN_DIR, "pi-v0.77.0-anthropic-extension-ui.jsonl"), "utf8")
+			.split("\n")
+			.filter((l) => l.length > 0);
+
+		test("every line parses without throwing", () => {
+			for (const line of lines) {
+				expect(() => parsePiEvents(line)).not.toThrow();
+			}
+		});
+
+		test("contains at least one extension_ui_request envelope mapped to state_change/system", () => {
+			const uiReqEvents = lines.flatMap((line) => {
+				const env = JSON.parse(line) as { type?: string };
+				if (env.type !== "extension_ui_request") return [];
+				return parsePiEvents(line);
+			});
+			expect(uiReqEvents.length).toBeGreaterThanOrEqual(1);
+			for (const ev of uiReqEvents) {
+				expect(ev.kind).toBe("state_change");
+				expect(ev.stream).toBe("system");
+				const payload = ev.payload as Record<string, unknown>;
+				expect(typeof payload.id).toBe("string");
+				expect((payload.id as string).length).toBeGreaterThan(0);
+				expect(typeof payload.method).toBe("string");
+			}
+		});
+
+		test("pi-chat's encodeExtensionUiDecline echoes the fixture's request id verbatim", () => {
+			const envelope = lines
+				.map((l) => JSON.parse(l) as Record<string, unknown>)
+				.find((e) => e.type === "extension_ui_request");
+			expect(envelope).toBeDefined();
+			if (!envelope) return;
+			const blob = encodeExtensionUiDecline(envelope);
+			expect(blob.endsWith("\n")).toBe(true);
+			const parsed = JSON.parse(blob.trim()) as Record<string, unknown>;
+			expect(parsed).toEqual({
+				type: "extension_ui_response",
+				id: envelope.id,
+				cancelled: true,
+			});
+		});
+
+		test("agent_end still appears (auto-decline does not abort the run)", () => {
+			const last = lines[lines.length - 1] ?? "";
+			const obj = JSON.parse(last) as { type?: string };
+			expect(obj.type).toBe("agent_end");
 		});
 	});
 });

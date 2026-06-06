@@ -552,7 +552,7 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 		const burrow = seedActiveBurrow(client, workspaceDir);
 		client.agents.register(piRuntime);
 
-		const lines = readFixtureLines("pi-v0.74.0-anthropic-success.jsonl");
+		const lines = readFixtureLines("pi-v0.77.0-anthropic-success.jsonl");
 		const calls: CollectedSpawn[] = [];
 
 		const dispatcher = startRunDispatcher(client, {
@@ -623,7 +623,7 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 		const burrow = seedActiveBurrow(client, workspaceDir);
 		client.agents.register(piRuntime);
 
-		const lines = readFixtureLines("pi-v0.74.0-anthropic-tools.jsonl");
+		const lines = readFixtureLines("pi-v0.77.0-anthropic-tools.jsonl");
 
 		const dispatcher = startRunDispatcher(client, {
 			logger: silentLogger,

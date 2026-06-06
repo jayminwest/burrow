@@ -1,6 +1,6 @@
 /**
- * Golden RPC-handshake compatibility lock for pi v0.74.0
- * (burrow-988b, plan pl-5198 step 7).
+ * Golden RPC-handshake compatibility lock for pi v0.77.0
+ * (burrow-988b, refreshed in burrow-f395).
  *
  * Why: pi is pre-1.0. A silent reshape of the JSONL stream across a
  * minor bump would slip through the parser-layer unit tests, which
@@ -9,10 +9,11 @@
  * in src/runtime/parsers/__golden__/README.md (timestamp, responseId,
  * request_id, thinkingSignature, toolCallId — plus the `id` field
  * inside `type:"toolCall"` content blocks, which carries the same
- * toolCallId value) and compares the resulting canonical JSONL to a
- * checked-in golden. Renamed keys, new fields, or restructured
- * envelopes show up as a reviewable diff — that's the cue to update
- * the parser, the goldens, and the pinned pi version in
+ * toolCallId value, and the freshly-generated UUID `id` on
+ * `type:"extension_ui_request"` envelopes) and compares the resulting
+ * canonical JSONL to a checked-in golden. Renamed keys, new fields, or
+ * restructured envelopes show up as a reviewable diff — that's the cue
+ * to update the parser, the goldens, and the pinned pi version in
  * .devcontainer/Dockerfile in a single coordinated change.
  *
  * Regenerating the golden when pi changes intentionally:
@@ -49,12 +50,15 @@ function canonicalize(value: unknown): unknown {
 	if (value === null || typeof value !== "object") return value;
 	const obj = value as Record<string, unknown>;
 	const isToolCall = obj.type === "toolCall";
+	const isExtensionUiRequest = obj.type === "extension_ui_request";
 	const out: Record<string, unknown> = {};
 	for (const k of Object.keys(obj).sort()) {
 		if (k in VOLATILE_PLACEHOLDERS) {
 			out[k] = VOLATILE_PLACEHOLDERS[k];
 		} else if (k === "id" && isToolCall) {
 			out[k] = "<toolCallId>";
+		} else if (k === "id" && isExtensionUiRequest) {
+			out[k] = "<extensionUiRequestId>";
 		} else {
 			out[k] = canonicalize(obj[k]);
 		}
@@ -68,9 +72,13 @@ function canonicalizeJsonl(raw: string): string {
 	return `${canonical.join("\n")}\n`;
 }
 
-const FIXTURES = ["pi-v0.74.0-anthropic-success", "pi-v0.74.0-anthropic-tools"] as const;
+const FIXTURES = [
+	"pi-v0.77.0-anthropic-success",
+	"pi-v0.77.0-anthropic-tools",
+	"pi-v0.77.0-anthropic-extension-ui",
+] as const;
 
-describe("pi v0.74.0 RPC handshake (golden wire-shape lock)", () => {
+describe("pi v0.77.0 RPC handshake (golden wire-shape lock)", () => {
 	for (const name of FIXTURES) {
 		describe(name, () => {
 			const fixturePath = join(GOLDEN_DIR, `${name}.jsonl`);
@@ -114,7 +122,7 @@ describe("pi v0.74.0 RPC handshake (golden wire-shape lock)", () => {
 		});
 	}
 
-	test("canonicalization scrubs every documented volatile field across both fixtures", () => {
+	test("canonicalization scrubs every documented volatile field across all fixtures", () => {
 		const volatileKeys = new Set(Object.keys(VOLATILE_PLACEHOLDERS));
 		for (const name of FIXTURES) {
 			const raw = readFileSync(join(GOLDEN_DIR, `${name}.jsonl`), "utf8");
@@ -124,6 +132,20 @@ describe("pi v0.74.0 RPC handshake (golden wire-shape lock)", () => {
 				assertScrubbed(obj, volatileKeys);
 			}
 		}
+	});
+
+	test("extension_ui_request fixture carries a real envelope with id+method (extensions enabled)", () => {
+		const raw = readFileSync(join(GOLDEN_DIR, "pi-v0.77.0-anthropic-extension-ui.jsonl"), "utf8");
+		const envelopes = raw
+			.split("\n")
+			.filter((l) => l.length > 0)
+			.map((l) => JSON.parse(l) as Record<string, unknown>);
+		const uiReqs = envelopes.filter((e) => e.type === "extension_ui_request");
+		expect(uiReqs.length).toBeGreaterThanOrEqual(1);
+		const first = uiReqs[0] as Record<string, unknown>;
+		expect(typeof first.id).toBe("string");
+		expect((first.id as string).length).toBeGreaterThan(0);
+		expect(typeof first.method).toBe("string");
 	});
 });
 
@@ -140,6 +162,9 @@ function assertScrubbed(value: unknown, volatileKeys: ReadonlySet<string>): void
 		}
 		if (k === "id" && obj.type === "toolCall") {
 			expect(v).toBe("<toolCallId>");
+		}
+		if (k === "id" && obj.type === "extension_ui_request") {
+			expect(v).toBe("<extensionUiRequestId>");
 		}
 		assertScrubbed(v, volatileKeys);
 	}
