@@ -179,6 +179,13 @@ export const PI_FORCED_ARGV_WITH_EXTENSIONS: readonly string[] = [
  * `~/.pi/agent/auth.json` (not bind-mounted into the sandbox), not an env
  * var.
  *
+ * `EXA_API_KEY` is forwarded for pi's built-in Exa web-search extension
+ * (pre-wires the later Exa slice — pi-chat enables extensions and reads
+ * this key from process env; plain `pi` runs with `--no-extensions` so the
+ * key is simply ignored). Like every passthrough name, it is forwarded
+ * into the sandbox only when set on the host (never via argv), so an
+ * unset key contributes nothing.
+ *
  * This is the *base* set — the conditional passthrough function
  * `piEnvPassthrough` returns these names regardless of the
  * `frontmatter.provider` override, so a run that flips back to anthropic
@@ -191,6 +198,7 @@ export const PI_ENV_PASSTHROUGH: readonly string[] = [
 	"ANTHROPIC_API_KEY",
 	"ANTHROPIC_AUTH_TOKEN",
 	"ANTHROPIC_BASE_URL",
+	"EXA_API_KEY",
 ] as const;
 
 /**

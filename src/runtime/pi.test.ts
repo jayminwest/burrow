@@ -445,15 +445,38 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 	// frontmatter to bake the anthropic base into profile.envPassthrough;
 	// the dispatcher re-invokes it with the run's frontmatter and unions
 	// the delta onto the per-spawn profile.
-	test("base set is the anthropic env trio (default provider, locked)", () => {
+	test("base set is the anthropic env trio + EXA_API_KEY (default provider, locked)", () => {
 		// Frozen base list — the anthropic auth surface stays available
 		// regardless of provider override so a follow-up run that flips
-		// back to anthropic keeps authenticating.
+		// back to anthropic keeps authenticating. EXA_API_KEY is pre-wired
+		// for pi's built-in Exa web-search extension (burrow-5cd5) —
+		// forwarded only when set on the host, never via argv; plain `pi`
+		// runs `--no-extensions` so the key is ignored there, pi-chat reads
+		// it via process env.
 		expect([...PI_ENV_PASSTHROUGH]).toEqual([
 			"ANTHROPIC_API_KEY",
 			"ANTHROPIC_AUTH_TOKEN",
 			"ANTHROPIC_BASE_URL",
+			"EXA_API_KEY",
 		]);
+	});
+
+	test("EXA_API_KEY is in the base set, not a provider-keyed delta (always forwarded when host-set)", () => {
+		// burrow-5cd5: EXA_API_KEY belongs to the base set so it is
+		// forwarded regardless of frontmatter.provider — Exa is a
+		// pi-extension capability orthogonal to which LLM provider the run
+		// targets. It MUST NOT appear in PI_PROVIDER_ENV_KEYS (that map is
+		// reserved for provider-specific auth keys).
+		expect([...PI_ENV_PASSTHROUGH]).toContain("EXA_API_KEY");
+		for (const keys of Object.values(PI_PROVIDER_ENV_KEYS)) {
+			expect(keys).not.toContain("EXA_API_KEY");
+		}
+		// Present across every resolved passthrough — default, explicit
+		// anthropic, known non-anthropic provider, and unknown provider.
+		expect(piEnvPassthrough({})).toContain("EXA_API_KEY");
+		expect(piEnvPassthrough({ frontmatter: { provider: "anthropic" } })).toContain("EXA_API_KEY");
+		expect(piEnvPassthrough({ frontmatter: { provider: "openai" } })).toContain("EXA_API_KEY");
+		expect(piEnvPassthrough({ frontmatter: { provider: "made-up-llm" } })).toContain("EXA_API_KEY");
 	});
 
 	test("envPassthrough is a function on the runtime", () => {
