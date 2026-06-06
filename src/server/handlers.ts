@@ -470,6 +470,8 @@ function createRun(client: Client): RouteHandler {
 			agentId: requireString(body, "agentId"),
 			prompt: requireString(body, "prompt"),
 		};
+		const resumeOfRunId = optionalString(body, "resumeOfRunId");
+		if (resumeOfRunId !== undefined) input.resumeOfRunId = resumeOfRunId;
 		if (body.metadata !== undefined) input.metadata = body.metadata;
 		return jsonResponse(201, client.runs.create(input));
 	};

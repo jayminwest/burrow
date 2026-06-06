@@ -85,6 +85,7 @@ export interface RunCreateInput {
 	burrowId: string;
 	agentId: string;
 	prompt: string;
+	resumeOfRunId?: string | null;
 	metadata?: unknown;
 }
 
@@ -296,6 +297,7 @@ export class RunsClient {
 			burrowId: input.burrowId,
 			agentId: input.agentId,
 			prompt: input.prompt,
+			resumeOfRunId: input.resumeOfRunId,
 			metadata: input.metadata,
 		});
 		this.onCreated?.(run.id);

@@ -397,6 +397,11 @@
             "type": "string",
             "minLength": 1
           },
+          "resumeOfRunId": {
+            "description": "Optional id of a prior run in the same burrow whose session this run resumes. Persisted on the run row (`resumeOfRunId`) so the dispatcher can route to a resume command instead of a fresh start. Omit for a new session.",
+            "type": "string",
+            "minLength": 1
+          },
           "metadata": {}
         },
         "required": [

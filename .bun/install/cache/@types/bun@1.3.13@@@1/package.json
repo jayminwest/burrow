@@ -1,0 +1,53 @@
+{
+    "name": "@types/bun",
+    "version": "1.3.13",
+    "description": "TypeScript definitions for bun",
+    "homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/bun",
+    "license": "MIT",
+    "contributors": [
+        {
+            "name": "Jarred Sumner",
+            "githubUsername": "Jarred-Sumner",
+            "url": "https://github.com/Jarred-Sumner"
+        },
+        {
+            "name": "Robobun",
+            "githubUsername": "robobun",
+            "url": "https://github.com/robobun"
+        },
+        {
+            "name": "Dylan Conway",
+            "githubUsername": "dylan-conway",
+            "url": "https://github.com/dylan-conway"
+        },
+        {
+            "name": "Ciro Spaciari",
+            "githubUsername": "cirospaciari",
+            "url": "https://github.com/cirospaciari"
+        },
+        {
+            "name": "Sosuke Suzuki",
+            "githubUsername": "sosukesuzuki",
+            "url": "https://github.com/sosukesuzuki"
+        },
+        {
+            "name": "Alistair Smith",
+            "githubUsername": "alii",
+            "url": "https://github.com/alii"
+        }
+    ],
+    "main": "",
+    "types": "index.d.ts",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/DefinitelyTyped/DefinitelyTyped.git",
+        "directory": "types/bun"
+    },
+    "scripts": {},
+    "dependencies": {
+        "bun-types": "1.3.13"
+    },
+    "peerDependencies": {},
+    "typesPublisherContentHash": "6af73d9894c2d56de750e185892bc37f651a1920be113920d64224a76564e09a",
+    "typeScriptVersion": "5.3"
+}

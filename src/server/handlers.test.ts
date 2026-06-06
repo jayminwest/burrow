@@ -677,6 +677,40 @@ describe("server handlers", () => {
 		expect(body.state).toBe("queued");
 	});
 
+	test("POST /burrows/:id/runs persists resumeOfRunId from the body", async () => {
+		const burrow = seedBurrow(client);
+		const prior = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "mock-agent",
+			prompt: "first",
+		});
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/runs`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				agentId: "mock-agent",
+				prompt: "resume",
+				resumeOfRunId: prior.id,
+			}),
+		});
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as Run;
+		expect(body.resumeOfRunId).toBe(prior.id);
+		expect(client.runs.get(body.id).resumeOfRunId).toBe(prior.id);
+	});
+
+	test("POST /burrows/:id/runs defaults resumeOfRunId to null when omitted", async () => {
+		const burrow = seedBurrow(client);
+		const res = await fetch(`${handle.url}/burrows/${burrow.id}/runs`, {
+			method: "POST",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ agentId: "mock-agent", prompt: "hello" }),
+		});
+		expect(res.status).toBe(201);
+		const body = (await res.json()) as Run;
+		expect(body.resumeOfRunId).toBeNull();
+	});
+
 	test("POST /burrows/:id/runs without prompt → 400", async () => {
 		const burrow = seedBurrow(client);
 		const res = await fetch(`${handle.url}/burrows/${burrow.id}/runs`, {
