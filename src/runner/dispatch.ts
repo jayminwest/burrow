@@ -294,6 +294,31 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 		});
 	}
 
+	// Auto-reply hook (burrow-aea0). After each batch of persisted events,
+	// give the runtime a chance to synthesize a stdin reply (e.g. pi-chat
+	// declining an `extension_ui_request`). Gated on stdin-hold + a live
+	// writeStdin sink so spawn-per-turn runtimes (claude-code, sapling) skip
+	// the path entirely. Errors are swallowed — a failed auto-reply must
+	// never fail an otherwise successful run.
+	const autoRespond = runtime.autoRespondToEvent;
+	const autoRespondActive =
+		useStdinHold && typeof autoRespond === "function" && typeof proc.writeStdin === "function";
+	const autoRespondToEvents = async (events: RuntimeEvent[]): Promise<void> => {
+		if (!autoRespondActive || !autoRespond || !proc.writeStdin) return;
+		for (const ev of events) {
+			if (stdinClosed) return;
+			const reply = autoRespond(ev);
+			if (!reply) continue;
+			try {
+				await proc.writeStdin(reply.stdin);
+			} catch {
+				// Sink closed underneath us — give up; the run finalize path
+				// (or the stdin-close trigger) will tidy up.
+				return;
+			}
+		}
+	};
+
 	const closeStdinIfNeeded = async (events: RuntimeEvent[]): Promise<void> => {
 		if (stdinClosed || !useStdinHold || !proc.closeStdin) return;
 		const trigger = runtime.shouldCloseStdinOnEvent;
@@ -312,6 +337,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 			if (line.length === 0) continue;
 			const events = runtime.parseEvents(line, { burrow, run });
 			persistEvents(events);
+			await autoRespondToEvents(events);
 			await closeStdinIfNeeded(events);
 		}
 	};
