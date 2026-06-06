@@ -583,6 +583,24 @@ describe("HttpClient (TCP transport)", () => {
 		expect(fetched.queuedAt.getTime()).toBe(persisted.queuedAt.getTime());
 	});
 
+	test("runs.create forwards resumeOfRunId on the wire (parity with in-process)", async () => {
+		const burrow = seedBurrow(client);
+		const prior = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "mock-agent",
+			prompt: "first",
+		});
+		const run = await http.runs.create({
+			burrowId: burrow.id,
+			agentId: "mock-agent",
+			prompt: "resume me",
+			resumeOfRunId: prior.id,
+		});
+		expect(run.resumeOfRunId).toBe(prior.id);
+		const persisted = client.runs.get(run.id);
+		expect(persisted.resumeOfRunId).toBe(prior.id);
+	});
+
 	test("runs.list requires burrowId over HTTP", async () => {
 		expect(() => http.runs.list({})).toThrow(ValidationError);
 	});

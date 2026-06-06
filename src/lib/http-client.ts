@@ -93,6 +93,12 @@ export interface HttpRunCreateInput {
 	agentId: string;
 	prompt: string;
 	metadata?: unknown;
+	/**
+	 * When set, the dispatcher resumes the prior run's agent session instead
+	 * of spawning a fresh one (subject to eligibility checks). Forwarded on the
+	 * wire as `resumeOfRunId` for HTTP/in-process parity with {@link RunCreateInput}.
+	 */
+	resumeOfRunId?: string;
 }
 
 export interface HttpBurrowUpInput {
@@ -514,6 +520,7 @@ export class HttpRunsClient {
 			prompt: input.prompt,
 		};
 		if (input.metadata !== undefined) body.metadata = input.metadata;
+		if (input.resumeOfRunId !== undefined) body.resumeOfRunId = input.resumeOfRunId;
 		const row = await this.transport.request<unknown>({
 			method: "POST",
 			path: `/burrows/${encodeURIComponent(input.burrowId)}/runs`,
