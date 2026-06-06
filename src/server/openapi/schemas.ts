@@ -372,6 +372,12 @@ export const CreateRunBodySchema = component(
 		agentId: z.string().min(1),
 		prompt: z.string().min(1),
 		metadata: z.unknown().optional(),
+		resumeOfRunId: z
+			.string()
+			.optional()
+			.describe(
+				"When set, the dispatcher resumes the agent session from this prior run instead of spawning a fresh one, subject to eligibility checks (runtime supports resume; the prior run exists, succeeded, and shares the same burrow + agent). Persisted on the new run's `resume_of_run_id` column.",
+			),
 	}),
 );
 
