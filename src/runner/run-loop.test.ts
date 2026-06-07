@@ -147,6 +147,73 @@ describe("RunLoop", () => {
 		expect(finalized.errorMessage).toBe("kaboom");
 	});
 
+	test("drainBurrow aborts only the targeted burrow's in-flight run (burrow-4855)", async () => {
+		const a = seedBurrow(repos, "a");
+		const b = seedBurrow(repos, "b");
+		const startedAt = new Map<string, number>();
+		const abortedA = deferred<boolean>();
+		const gateB = deferred<void>();
+
+		const handler: RunHandler = ({ run, signal }) =>
+			new Promise((resolve) => {
+				startedAt.set(run.burrowId, Date.now());
+				if (run.burrowId === a.id) {
+					signal.addEventListener("abort", () => {
+						abortedA.resolve(true);
+						resolve({ state: "cancelled", errorMessage: "aborted" });
+					});
+				} else {
+					gateB.promise.then(() => resolve({ state: "succeeded" }));
+				}
+			});
+		const loop = new RunLoop({ repos, handler });
+		loop.start();
+
+		const ra = repos.runs.enqueue({ burrowId: a.id, agentId: "x", prompt: "" });
+		const rb = repos.runs.enqueue({ burrowId: b.id, agentId: "x", prompt: "" });
+		const pa = loop.enqueue(ra.id);
+		const pb = loop.enqueue(rb.id);
+		while (startedAt.size < 2) await new Promise((r) => setTimeout(r, 5));
+
+		await loop.drainBurrow(a.id, { force: true });
+		await pa;
+
+		expect(await abortedA.promise).toBe(true);
+		expect(repos.runs.require(ra.id).state).toBe("cancelled");
+		// Burrow b is untouched and still in flight.
+		expect(repos.runs.require(rb.id).state).toBe("running");
+
+		gateB.resolve();
+		await pb;
+		await loop.stop();
+		expect(repos.runs.require(rb.id).state).toBe("succeeded");
+	});
+
+	test("finalize tolerates a run row pruned mid-flight (burrow-4855)", async () => {
+		const burrow = seedBurrow(repos);
+		const reached = deferred<void>();
+		const release = deferred<void>();
+		const handler: RunHandler = async ({ run }) => {
+			reached.resolve();
+			await release.promise;
+			// Simulate a concurrent destroy pruning the row mid-flight.
+			repos.runs.delete(run.id);
+			return { state: "succeeded" };
+		};
+		const loop = new RunLoop({ repos, handler });
+		loop.start();
+
+		const run = repos.runs.enqueue({ burrowId: burrow.id, agentId: "x", prompt: "p" });
+		const inflight = loop.enqueue(run.id);
+		await reached.promise;
+		release.resolve();
+		// Must resolve without throwing even though the row vanished.
+		await inflight;
+		await loop.stop();
+
+		expect(repos.runs.get(run.id)).toBeNull();
+	});
+
 	test("force-stop signals abort to in-flight handlers", async () => {
 		const burrow = seedBurrow(repos);
 		const aborted = deferred<boolean>();

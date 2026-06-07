@@ -131,20 +131,28 @@ export class RunLoop {
 
 		try {
 			if (signal.aborted) {
-				this.repos.runs.finalize(claimed.id, {
+				const finalized = this.repos.runs.finalize(claimed.id, {
 					state: "cancelled",
 					errorMessage: "run loop aborted",
 				});
-				log?.warn("run cancelled before handler invocation");
+				if (finalized) log?.warn("run cancelled before handler invocation");
+				else log?.warn("run vanished before cancel finalize (destroyed?)");
 				return;
 			}
 			const outcome = await this.handler({ run: claimed, signal, repos: this.repos });
-			this.repos.runs.finalize(claimed.id, outcome);
-			log?.info({ outcome }, "run finalized");
+			const finalized = this.repos.runs.finalize(claimed.id, outcome);
+			if (finalized) log?.info({ outcome }, "run finalized");
+			else log?.warn({ outcome }, "run vanished before finalize (destroyed?)");
 		} catch (err) {
 			const errorMessage = err instanceof Error ? err.message : String(err);
-			this.repos.runs.finalize(claimed.id, { state: "failed", errorMessage });
-			log?.error({ err: errorMessage }, "run handler threw");
+			// finalize tolerates a pruned row (burrow-4855): a concurrent
+			// destroy may have removed the run between claim and here.
+			const finalized = this.repos.runs.finalize(claimed.id, {
+				state: "failed",
+				errorMessage,
+			});
+			if (finalized) log?.error({ err: errorMessage }, "run handler threw");
+			else log?.warn({ err: errorMessage }, "run handler threw after run vanished (destroyed?)");
 		}
 	}
 
@@ -168,6 +176,36 @@ export class RunLoop {
 			]);
 		} else {
 			await drain;
+		}
+	}
+
+	/**
+	 * Drain (or abort) every run queued/in-flight for a single burrow
+	 * (burrow-4855). Called by `burrow destroy` before it prunes the
+	 * burrow's rows so an in-flight run can't have its row deleted mid-flight
+	 * — which would leak the run's sandbox/workspace and crash the finalize
+	 * path. With `force` (the destroy default) the burrow's AbortController
+	 * fires so the handler short-circuits and tears its sandbox down, then we
+	 * wait for the queue to idle. The queue entry is dropped afterwards so a
+	 * stale aborted controller can't poison a (re-created) burrow id.
+	 */
+	async drainBurrow(
+		burrowId: string,
+		opts: { force?: boolean; timeoutMs?: number } = {},
+	): Promise<void> {
+		const bq = this.burrowQueues.get(burrowId);
+		if (!bq) return;
+		if (opts.force) bq.abort.abort();
+		const idle = bq.queue.onIdle();
+		if (opts.timeoutMs) {
+			await Promise.race([idle, new Promise<void>((r) => setTimeout(r, opts.timeoutMs))]);
+		} else {
+			await idle;
+		}
+		// Only discard a fully-drained queue; a timeout race may have left
+		// work behind, and dropping it would orphan the in-flight handler.
+		if (bq.queue.size + bq.queue.pending === 0) {
+			this.burrowQueues.delete(burrowId);
 		}
 	}
 

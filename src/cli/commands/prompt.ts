@@ -134,7 +134,16 @@ export async function runPromptCommand(input: PromptCommandInput): Promise<Promp
 	if (input.installCheck) dispatchInput.installCheck = input.installCheck;
 
 	const outcome = await dispatchRun(dispatchInput);
-	const finalized = repos.runs.finalize(claimed.id, outcome);
+	// finalize returns null only if the row vanished mid-dispatch (a
+	// concurrent destroy, burrow-4855). The inline CLI owns its run, so fall
+	// back to the claimed snapshot stamped with the terminal outcome.
+	const finalized = repos.runs.finalize(claimed.id, outcome) ?? {
+		...claimed,
+		state: outcome.state,
+		exitCode: outcome.exitCode ?? null,
+		errorMessage: outcome.errorMessage ?? null,
+		completedAt: new Date(),
+	};
 
 	if (outcome.state === "failed" && outcome.errorMessage?.startsWith("event stream failed:")) {
 		// Mirror the prior CLI behavior: bubble the underlying stream error

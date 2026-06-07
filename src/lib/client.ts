@@ -162,6 +162,7 @@ export interface EventTailFilter {
 export class BurrowsClient {
 	private upOverrides: BurrowUpOverrides | null = null;
 	private destroyOverrides: BurrowDestroyOverrides | null = null;
+	private onDestroy: ((burrowId: string) => Promise<void>) | null = null;
 
 	constructor(
 		private readonly client: Client,
@@ -215,6 +216,17 @@ export class BurrowsClient {
 		this.destroyOverrides = overrides;
 	}
 
+	/**
+	 * Register a hook invoked during `destroy()` after the burrow is stopped
+	 * but before its rows are pruned (burrow-4855). The `RunDispatcher` wires
+	 * `RunLoop.drainBurrow` here so an in-flight run is aborted + drained
+	 * before `pruneLiveRows` can delete its row mid-flight. Single-callback —
+	 * setting again replaces the previous registration; pass `null` to clear.
+	 */
+	setOnDestroy(cb: ((burrowId: string) => Promise<void>) | null): void {
+		this.onDestroy = cb;
+	}
+
 	list(filter: BurrowListFilter = {}): Burrow[] {
 		let rows = filter.state
 			? this.repos.burrows.listByState(filter.state, filter.kind)
@@ -265,6 +277,7 @@ export class BurrowsClient {
 			...(this.destroyOverrides?.removeWorkspace
 				? { removeWorkspace: this.destroyOverrides.removeWorkspace }
 				: {}),
+			...(this.onDestroy ? { drainRuns: this.onDestroy } : {}),
 		};
 		const outcome = await destroyBurrowFully(this.client, id, fullOpts);
 		return outcome.archive;
@@ -343,6 +356,10 @@ export class RunsClient {
 			state: "cancelled",
 			errorMessage: reason ?? "cancelled via Client.runs.cancel",
 		});
+		// The row was pruned out from under us (e.g. a concurrent destroy,
+		// burrow-4855). Nothing to cancel or publish — return the snapshot
+		// we already read.
+		if (!finalized) return current;
 		appendAndPublish({
 			repo: this.repos.events,
 			bus: this.bus,

@@ -48,6 +48,14 @@ export interface RunDispatcherHandle {
 	/** Drain in-flight handlers; with `force`, signals abort to every burrow queue. */
 	stop(opts?: { force?: boolean; timeoutMs?: number }): Promise<void>;
 	/**
+	 * Drain (or abort) in-flight runs for a single burrow before it is
+	 * destroyed (burrow-4855). Wired into `client.burrows.setOnDestroy` so a
+	 * `DELETE /burrows/:id` waits for the burrow's runs to reach terminal
+	 * state — tearing down their sandboxes — before the destroy flow prunes
+	 * the rows out from under them.
+	 */
+	drainBurrow(burrowId: string, opts?: { force?: boolean; timeoutMs?: number }): Promise<void>;
+	/**
 	 * Visible for tests. True when the loop has nothing pending or in-flight.
 	 * Useful as a synchronisation point for "wait for the last enqueued run
 	 * to finish" without polling DB state.
@@ -132,16 +140,24 @@ export function startRunDispatcher(
 					opts.logger?.error({ err, runId }, "RunDispatcher: enqueue threw");
 				});
 			});
+			// Coordinate destroy with the loop (burrow-4855): a destroy first
+			// stops the burrow (so no new run starts) then awaits this hook,
+			// which aborts + drains any in-flight run, before pruning rows.
+			client.burrows.setOnDestroy((burrowId) => loop.drainBurrow(burrowId, { force: true }));
 			return loop.start();
 		},
 		async stop(stopOpts = {}) {
 			if (stopped) return;
 			stopped = true;
 			client.runs.setOnCreated(null);
+			client.burrows.setOnDestroy(null);
 			await loop.stop(stopOpts);
 		},
 		isIdle() {
 			return loop.isIdle();
+		},
+		drainBurrow(burrowId, drainOpts) {
+			return loop.drainBurrow(burrowId, drainOpts ?? {});
 		},
 	};
 }

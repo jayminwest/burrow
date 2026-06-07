@@ -29,6 +29,14 @@ export interface DestroyBurrowFullyOptions {
 	force?: boolean;
 	/** Test seam: override the workspace remover. */
 	removeWorkspace?: (opts: RemoveWorkspaceOptions) => Promise<void>;
+	/**
+	 * Coordinate with the run dispatcher (burrow-4855). Invoked after the
+	 * burrow is stopped but before its workspace is removed and its rows are
+	 * pruned, so any in-flight run on this burrow is aborted + drained first.
+	 * Wired by the `RunDispatcher` via `client.burrows.setOnDestroy`; the
+	 * library-only / inline paths leave it unset (no loop to drain).
+	 */
+	drainRuns?: (burrowId: string) => Promise<void>;
 }
 
 export interface DestroyBurrowFullyOutcome {
@@ -59,6 +67,11 @@ export async function destroyBurrowFully(
 	if (burrow.state === "active") {
 		client.burrows.stop(burrowId);
 	}
+	// Stop first (so no fresh run starts), then drain any in-flight run on
+	// this burrow before touching its workspace/rows (burrow-4855). Without
+	// this, pruneLiveRows can delete a running run's row mid-flight, crashing
+	// finalize and leaking the run's sandbox.
+	await options.drainRuns?.(burrowId);
 	const remover = options.removeWorkspace ?? removeMaterializedWorkspace;
 	const workspaceRemoved = options.keepWorkspace
 		? false

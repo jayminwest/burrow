@@ -300,6 +300,65 @@ describe("startRunDispatcher", () => {
 		expect(client.runs.get(run.id).state).toBe("succeeded");
 	});
 
+	test("destroy drains an in-flight run before pruning (burrow-4855)", async () => {
+		const burrow = seedActiveBurrow(client);
+		client.agents.register(fakeRuntime());
+		// Don't touch the real worktree; we only care about the run drain.
+		client.burrows.setDestroyOverrides({ removeWorkspace: async () => {} });
+
+		let cancelled = false;
+		let started = false;
+		// A spawn that blocks until cancelled — models a long-running agent.
+		const blockingSpawn: SpawnFn = async () => {
+			started = true;
+			let resolveExit!: (n: number) => void;
+			const exited = new Promise<number>((r) => {
+				resolveExit = r;
+			});
+			const empty = new ReadableStream<Uint8Array>({
+				start(c) {
+					c.close();
+				},
+			});
+			return {
+				pid: 999,
+				stdout: empty,
+				stderr: new ReadableStream<Uint8Array>({
+					start(c) {
+						c.close();
+					},
+				}),
+				exited,
+				cancel: () => {
+					cancelled = true;
+					resolveExit(130);
+				},
+			};
+		};
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: blockingSpawn,
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({ burrowId: burrow.id, agentId: "fake", prompt: "p" });
+		await waitFor(() => started && client.runs.get(run.id).state === "running");
+
+		// Destroy must wait for the in-flight run to drain (abort → cancel)
+		// before pruning, and must not throw "run not found".
+		const result = await client.burrows.destroy(burrow.id, { archive: false });
+
+		expect(cancelled).toBe(true);
+		expect(result.burrowId).toBe(burrow.id);
+		expect(client.burrows.tryGet(burrow.id)?.state).toBe("destroyed");
+		// The run row was pruned as part of destroy.
+		expect(client.runs.tryGet(run.id)).toBeNull();
+		expect(dispatcher.isIdle()).toBe(true);
+
+		await dispatcher.stop();
+	});
+
 	test("isIdle is true once all enqueued runs have finalized", async () => {
 		const burrow = seedActiveBurrow(client);
 		client.agents.register(fakeRuntime());

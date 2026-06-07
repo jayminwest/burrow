@@ -74,6 +74,18 @@ describe("RunsRepo", () => {
 		);
 	});
 
+	test("finalize returns null when the run row has vanished (burrow-4855)", () => {
+		const burrow = seedBurrow(repos);
+		const run = repos.runs.enqueue({
+			burrowId: burrow.id,
+			agentId: "claude-code",
+			prompt: "p",
+		});
+		repos.runs.markRunning(run.id);
+		repos.runs.delete(run.id);
+		expect(repos.runs.finalize(run.id, { state: "succeeded" })).toBeNull();
+	});
+
 	test("failAllRunning marks every running row failed and returns ids", () => {
 		const burrow = seedBurrow(repos);
 		const r1 = repos.runs.enqueue({ burrowId: burrow.id, agentId: "x", prompt: "1" });

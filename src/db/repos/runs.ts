@@ -117,8 +117,16 @@ export class RunsRepo {
 		return { ...current, metadataJson: merged };
 	}
 
-	finalize(id: string, input: FinalizeRunInput): RunRow {
-		const current = this.require(id);
+	/**
+	 * Write a terminal state onto a run row. Returns `null` when the row no
+	 * longer exists — under a concurrent `burrow destroy`, `pruneLiveRows`
+	 * can delete a run between claim and finalize (burrow-4855), and the run
+	 * loop must tolerate the vanished row rather than throwing
+	 * `NotFoundError` on the cleanup path.
+	 */
+	finalize(id: string, input: FinalizeRunInput): RunRow | null {
+		const current = this.get(id);
+		if (!current) return null;
 		assertRunTransition(current.state, input.state);
 		const now = input.now ?? new Date();
 		const patch: Partial<RunRow> = {
