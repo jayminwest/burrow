@@ -406,4 +406,60 @@ describe("parsePiEvents", () => {
 			}
 		});
 	});
+
+	describe("golden fixture: pi-v0.78.1-anthropic-extension-ui.jsonl (extensions enabled)", () => {
+		const lines = readFileSync(join(GOLDEN_DIR, "pi-v0.78.1-anthropic-extension-ui.jsonl"), "utf8")
+			.split("\n")
+			.filter((l) => l.length > 0);
+
+		test("every line parses without throwing", () => {
+			for (const line of lines) {
+				expect(() => parsePiEvents(line)).not.toThrow();
+			}
+		});
+
+		test("the real extension_ui_request envelope maps to state_change/system", () => {
+			const events = lines.flatMap((line) => {
+				const env = JSON.parse(line) as { type?: string };
+				if (env.type !== "extension_ui_request") return [];
+				return parsePiEvents(line);
+			});
+			expect(events).toHaveLength(1);
+			expect(events[0]?.kind).toBe("state_change");
+			expect(events[0]?.stream).toBe("system");
+			expect(events[0]?.payload).toMatchObject({
+				type: "extension_ui_request",
+				method: "select",
+			});
+		});
+
+		test("no parseError fallbacks on any line", () => {
+			for (const line of lines) {
+				for (const ev of parsePiEvents(line)) {
+					if (ev.kind === "text" && ev.stream === "stdout") {
+						const p = ev.payload as { parseError?: unknown };
+						expect(p.parseError).toBeUndefined();
+					}
+				}
+			}
+		});
+
+		test("agent_end is the terminal envelope and maps to state_change/system", () => {
+			const last = lines[lines.length - 1] ?? "";
+			const env = JSON.parse(last) as { type?: string };
+			expect(env.type).toBe("agent_end");
+			const events = parsePiEvents(last);
+			expect(events[0]?.kind).toBe("state_change");
+			expect(events[0]?.stream).toBe("system");
+		});
+	});
+
+	test("0.78.1 vocabulary delta: agent_end's new willRetry field is preserved in payload", () => {
+		const env = { type: "agent_end", willRetry: false, messages: [] };
+		const events = parsePiEvents(JSON.stringify(env));
+		expect(events).toHaveLength(1);
+		expect(events[0]?.kind).toBe("state_change");
+		expect(events[0]?.stream).toBe("system");
+		expect(events[0]?.payload).toMatchObject({ type: "agent_end", willRetry: false });
+	});
 });
