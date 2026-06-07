@@ -14,7 +14,7 @@
  */
 
 import PQueue from "p-queue";
-import { runStartupRecovery } from "../db/recovery.ts";
+import { type RecoverySweepResult, runStartupRecovery } from "../db/recovery.ts";
 import type { Repos } from "../db/repos/index.ts";
 import type { RunRow } from "../db/schema.ts";
 import type { Logger } from "../logging/logger.ts";
@@ -65,15 +65,22 @@ export class RunLoop {
 	/**
 	 * Sweep crashed state, then re-enqueue any leftover queued runs. Idempotent.
 	 */
-	start(): { recovered: { failedRunIds: string[]; resetMessageIds: string[] } } {
-		if (this.started) return { recovered: { failedRunIds: [], resetMessageIds: [] } };
+	start(): { recovered: RecoverySweepResult } {
+		if (this.started) {
+			return { recovered: { failedRunIds: [], resetMessageIds: [], prunedBurrowIds: [] } };
+		}
 		this.started = true;
 		const recovered = runStartupRecovery(this.repos);
-		if (recovered.failedRunIds.length > 0 || recovered.resetMessageIds.length > 0) {
+		if (
+			recovered.failedRunIds.length > 0 ||
+			recovered.resetMessageIds.length > 0 ||
+			recovered.prunedBurrowIds.length > 0
+		) {
 			this.logger?.warn(
 				{
 					failedRunIds: recovered.failedRunIds,
 					resetMessageIds: recovered.resetMessageIds,
+					prunedBurrowIds: recovered.prunedBurrowIds,
 				},
 				"crash-recovery sweep applied",
 			);

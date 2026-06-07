@@ -25,6 +25,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { ValidationError } from "../../core/errors.ts";
+import type { RecoverySweepResult } from "../../db/recovery.ts";
 import type { Client } from "../../lib/client.ts";
 import type { Logger } from "../../logging/logger.ts";
 import {
@@ -84,7 +85,7 @@ export interface ServeCommandSummary {
 	 * the rows the startup sweep flipped to terminal so callers (and tests)
 	 * can confirm the dispatcher actually booted.
 	 */
-	recovered: { failedRunIds: string[]; resetMessageIds: string[] };
+	recovered: RecoverySweepResult;
 }
 
 export async function runServeCommand(input: ServeCommandInput): Promise<ServeCommandSummary> {

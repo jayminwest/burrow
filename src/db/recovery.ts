@@ -20,6 +20,7 @@ export const CRASH_ERROR_MESSAGE = "process exited unexpectedly";
 export interface RecoverySweepResult {
 	failedRunIds: string[];
 	resetMessageIds: string[];
+	prunedBurrowIds: string[];
 }
 
 export function runStartupRecovery(repos: Repos, now: Date = new Date()): RecoverySweepResult {
@@ -29,5 +30,7 @@ export function runStartupRecovery(repos: Repos, now: Date = new Date()): Recove
 	// look like they were delivered to a (newly) failed run and stay stuck.
 	const resetMessageIds = repos.messages.resetDeliveredOrphans();
 	const failedRunIds = repos.runs.failAllRunning(CRASH_ERROR_MESSAGE, now);
-	return { failedRunIds, resetMessageIds };
+	// Reap fully-archived destroyed burrows so their rows stop accumulating.
+	const prunedBurrowIds = repos.burrows.deleteDestroyed();
+	return { failedRunIds, resetMessageIds, prunedBurrowIds };
 }

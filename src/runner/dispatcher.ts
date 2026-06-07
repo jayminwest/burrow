@@ -23,6 +23,7 @@
  * `startRunDispatcher`. The `Client` itself stays unchanged.
  */
 
+import type { RecoverySweepResult } from "../db/recovery.ts";
 import type { Client } from "../lib/client.ts";
 import type { Logger } from "../logging/logger.ts";
 import type { AgentRuntime, InstallCheckResult } from "../runtime/runtime.ts";
@@ -43,7 +44,7 @@ export interface RunDispatcherOptions {
 
 export interface RunDispatcherHandle {
 	/** Idempotent. Returns the recovery-sweep summary from the underlying RunLoop. */
-	start(): { recovered: { failedRunIds: string[]; resetMessageIds: string[] } };
+	start(): { recovered: RecoverySweepResult };
 	/** Drain in-flight handlers; with `force`, signals abort to every burrow queue. */
 	stop(opts?: { force?: boolean; timeoutMs?: number }): Promise<void>;
 	/**
@@ -112,7 +113,9 @@ export function startRunDispatcher(
 	return {
 		drain,
 		start() {
-			if (started) return { recovered: { failedRunIds: [], resetMessageIds: [] } };
+			if (started) {
+				return { recovered: { failedRunIds: [], resetMessageIds: [], prunedBurrowIds: [] } };
+			}
 			started = true;
 			// Wire create-time → enqueue BEFORE starting the loop so the
 			// initial sweep in `loop.start()` and any concurrent

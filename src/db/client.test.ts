@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "./client.ts";
+import { openDatabase, reclaimIfBloated } from "./client.ts";
+import { createRepos } from "./repos/index.ts";
 
 describe("openDatabase", () => {
 	test("runs migrations against a fresh in-memory db", async () => {
@@ -34,6 +35,69 @@ describe("openDatabase", () => {
 		} finally {
 			db.close();
 			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	test("enables incremental auto_vacuum on file-backed databases", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "burrow-db-"));
+		const dbPath = join(tmp, "db.sqlite");
+		const db = await openDatabase({ path: dbPath });
+		try {
+			const mode = db.raw.query<{ auto_vacuum: number }, []>("PRAGMA auto_vacuum").get();
+			expect(mode?.auto_vacuum).toBe(2);
+		} finally {
+			db.close();
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	test("self-healing VACUUM reclaims a bloated file on reopen", async () => {
+		const tmp = mkdtempSync(join(tmpdir(), "burrow-db-"));
+		const dbPath = join(tmp, "db.sqlite");
+		const a = await openDatabase({ path: dbPath });
+		const repos = createRepos(a);
+		const burrow = repos.burrows.create({
+			kind: "project",
+			projectRoot: "/r",
+			workspacePath: "/r/ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		for (let i = 0; i < 4000; i++) {
+			repos.events.append({
+				burrowId: burrow.id,
+				kind: "k",
+				stream: "stdout",
+				payload: { i, blob: "x".repeat(64) },
+			});
+		}
+		a.raw.exec("DELETE FROM events");
+		const bloated =
+			a.raw.query<{ freelist_count: number }, []>("PRAGMA freelist_count").get()?.freelist_count ??
+			0;
+		expect(bloated).toBeGreaterThan(0);
+		a.close();
+
+		// Reopen triggers reclaimIfBloated when the freelist dominates the file.
+		const b = await openDatabase({ path: dbPath });
+		try {
+			const after =
+				b.raw.query<{ freelist_count: number }, []>("PRAGMA freelist_count").get()
+					?.freelist_count ?? -1;
+			expect(after).toBeLessThan(bloated);
+		} finally {
+			b.close();
+			rmSync(tmp, { recursive: true, force: true });
+		}
+	});
+
+	test("reclaimIfBloated is a no-op when the freelist is small", async () => {
+		const db = await openDatabase({ path: ":memory:" });
+		try {
+			expect(reclaimIfBloated(db.raw)).toBe(false);
+		} finally {
+			db.close();
 		}
 	});
 

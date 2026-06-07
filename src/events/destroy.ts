@@ -57,6 +57,9 @@ export async function destroyBurrowStorage(
 
 	const counts = pruneLiveRows(input.db, input.burrowId);
 	repos.burrows.markDestroyed(input.burrowId, input.now);
+	// Return the freed pages to the OS now rather than letting the freelist
+	// accumulate across reaped runs. No-op unless auto_vacuum = INCREMENTAL.
+	input.db.raw.exec("PRAGMA incremental_vacuum");
 
 	return {
 		burrowId: input.burrowId,

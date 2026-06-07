@@ -90,4 +90,31 @@ describe("BurrowsRepo", () => {
 		expect(destroyed.destroyedAt).toBeInstanceOf(Date);
 		expect(() => repos.burrows.markActive(a.id)).toThrow(/illegal burrow transition/);
 	});
+
+	test("deleteDestroyed removes only destroyed rows and returns their ids", () => {
+		const live = repos.burrows.create({
+			kind: "project",
+			projectRoot: "/a",
+			workspacePath: "/a/ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		const gone = repos.burrows.create({
+			kind: "project",
+			projectRoot: "/b",
+			workspacePath: "/b/ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		repos.burrows.markDestroyed(gone.id);
+
+		const pruned = repos.burrows.deleteDestroyed();
+		expect(pruned).toEqual([gone.id]);
+		expect(repos.burrows.get(gone.id)).toBeNull();
+		expect(repos.burrows.get(live.id)?.state).toBe("active");
+
+		expect(repos.burrows.deleteDestroyed()).toEqual([]);
+	});
 });

@@ -104,4 +104,22 @@ export class BurrowsRepo {
 	markDestroyed(id: string, now: Date = new Date()): BurrowRow {
 		return this.transition(id, "destroyed", now);
 	}
+
+	/**
+	 * Delete every burrow row already in the terminal `destroyed` state and
+	 * return their ids. Destroyed burrows have had their events/messages/runs
+	 * archived and pruned, so the row is dead weight; without this sweep they
+	 * accumulate forever (one per ephemeral run). Run from startup recovery so
+	 * within-session idempotency (state === "destroyed") still holds.
+	 */
+	deleteDestroyed(): string[] {
+		const rows = this.db
+			.select({ id: burrows.id })
+			.from(burrows)
+			.where(eq(burrows.state, "destroyed"))
+			.all();
+		if (rows.length === 0) return [];
+		this.db.delete(burrows).where(eq(burrows.state, "destroyed")).run();
+		return rows.map((r) => r.id);
+	}
 }

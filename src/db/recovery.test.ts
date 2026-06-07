@@ -46,5 +46,22 @@ describe("runStartupRecovery", () => {
 		const result = runStartupRecovery(repos);
 		expect(result.failedRunIds).toEqual([]);
 		expect(result.resetMessageIds).toEqual([]);
+		expect(result.prunedBurrowIds).toEqual([]);
+	});
+
+	test("prunes destroyed burrow rows so they stop accumulating", () => {
+		const burrow = repos.burrows.create({
+			kind: "project",
+			projectRoot: "/r",
+			workspacePath: "/r/ws",
+			branch: "main",
+			provider: "local",
+			profile: {},
+		});
+		repos.burrows.markDestroyed(burrow.id);
+
+		const result = runStartupRecovery(repos);
+		expect(result.prunedBurrowIds).toEqual([burrow.id]);
+		expect(repos.burrows.get(burrow.id)).toBeNull();
 	});
 });
