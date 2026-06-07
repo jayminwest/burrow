@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.13] - 2026-06-07
+
+Maintenance release: tolerant run teardown, SQLite reclamation, and
+refreshed pi RPC goldens.
+
+### Added
+
+- **`feat(goldens)`** — captured pi 0.78.1 RPC fixtures including the
+  `extension_ui_request` envelope, keeping the pi/pi-chat wire goldens
+  current. (burrow-f395)
+
+### Changed
+
+- **`fix(runner)`** — coordinate burrow destroy with the `RunLoop` and
+  make finalize tolerant, so teardown no longer races an in-flight run.
+  (burrow-4855)
+- **`perf(db)`** — reclaim SQLite space and prune destroyed burrows to
+  keep the session/event store from growing unbounded. (burrow-05cb)
+
 ## [0.3.12] - 2026-06-06
 
 Ships the `pi-chat` AgentRuntime — a conversational, stdin-held variant
