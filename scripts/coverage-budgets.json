@@ -1,0 +1,6 @@
+{
+	"_comment": "Coverage floors enforced by scripts/check-coverage.ts against the `All files` row of Bun's text coverage reporter. Optionally, `packages` keys (path prefixes) declare per-package floors checked against matching file rows. Baselined 2026-06-11 (pl-beec) from `bun test --coverage` with the L5-toolkit scripts included (functions 91.05%, lines 92.84%) and rounded DOWN ~1pp to absorb measurement noise. The ratchet only goes UP — raise floors as coverage improves; lowering implies deleting tests and needs a tracker reference in the diff. The script never auto-edits this file: loosening requires an explicit commit by a human.",
+	"functions": 90.0,
+	"lines": 92.0,
+	"packages": {}
+}

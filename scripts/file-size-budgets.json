@@ -1,0 +1,21 @@
+{
+	"_comment": "Per-file line-count budgets enforced by scripts/check-file-sizes.ts. New `.ts`/`.tsx` files default to `threshold` lines. Files listed in `budgets` are grandfathered at their commit-time line count (rounded up to the next 50 plus 50 headroom, per the L5-toolkit baselining procedure) and may not grow past their entry — the ratchet only goes DOWN. Loosening (raising `threshold` or a budget entry) requires an explicit commit by a human; the script never auto-edits this file. Baselined 2026-06-11 (pl-beec).",
+	"threshold": 500,
+	"budgets": {
+		"src/runner/dispatcher.test.ts": 1650,
+		"src/server/handlers.test.ts": 1200,
+		"src/lib/http-client.ts": 1150,
+		"src/server/handlers.ts": 1100,
+		"src/server/openapi/spec.ts": 1100,
+		"src/lib/http-client.test.ts": 1050,
+		"src/cli/commands/up.test.ts": 950,
+		"src/runtime/pi.test.ts": 950,
+		"src/cli/main.ts": 800,
+		"src/lib/client.ts": 650,
+		"src/runner/dispatch.ts": 650,
+		"src/cli/commands/prompt.test.ts": 600,
+		"src/server/integration.test.ts": 600,
+		"src/server/openapi/schemas.ts": 600,
+		"src/dashboard/snapshot.test.ts": 600
+	}
+}
