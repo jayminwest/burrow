@@ -34,13 +34,39 @@ export interface InstallCheckResult {
  * `rendered_agent_json.frontmatter` — operator overrides + project defaults
  * + agent frontmatter all flatten through this shape). Built-in runtimes
  * that accept provider / model flags honor these to override their pinned
- * defaults; empty or whitespace-only values are treated as unset (fall back
- * to the runtime default). Sourced from `Run.metadataJson.frontmatter` by
- * the dispatcher (burrow-b5b4).
+ * defaults, and the pi runtime accepts an allowlisted `pi` option bag for
+ * CLI flags such as extension loading and project approval. Empty or
+ * whitespace-only strings are treated as unset (fall back to the runtime
+ * default). Sourced from `Run.metadataJson.frontmatter` by the dispatcher
+ * (burrow-b5b4).
  */
+export interface PiFrontmatterOptions {
+	/** Opt in to pi extension discovery by eliding --no-extensions. */
+	extensions?: boolean;
+	/** Trust project-local .pi settings/resources for this non-interactive run. */
+	approve?: boolean;
+	/** Disable all tools by default. Maps to --no-tools. */
+	noTools?: boolean;
+	/** Disable built-in tools while leaving extension/custom tools available. */
+	noBuiltinTools?: boolean;
+	/** Comma-separated or array-form allowlist for --tools. */
+	tools?: string | readonly string[];
+	/** Comma-separated or array-form denylist for --exclude-tools. */
+	excludeTools?: string | readonly string[];
+	/** Extra extension paths to load with repeated --extension flags. */
+	extension?: string | readonly string[];
+	/** Extra skill paths to load with repeated --skill flags. */
+	skill?: string | readonly string[];
+	/** Extra prompt template paths to load with repeated --prompt-template flags. */
+	promptTemplate?: string | readonly string[];
+	/** Extra theme paths to load with repeated --theme flags. */
+	theme?: string | readonly string[];
+}
+
 export interface AgentFrontmatter {
 	provider?: string;
 	model?: string;
+	pi?: PiFrontmatterOptions;
 }
 
 export interface SpawnContext {

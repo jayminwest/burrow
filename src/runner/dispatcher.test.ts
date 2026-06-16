@@ -818,6 +818,89 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 		}
 	});
 
+	test("frontmatter.pi options reach pi argv through run metadata", async () => {
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+		const calls: CollectedSpawn[] = [];
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ stdoutLines: [], calls }),
+			installCheck: async () => ({ installed: true, version: "0.78.1", path: "/usr/local/bin/pi" }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "p",
+			metadata: {
+				frontmatter: {
+					provider: "openai",
+					model: "gpt-4o",
+					pi: {
+						extensions: true,
+						approve: true,
+						tools: ["read", "subagent"],
+					},
+				},
+			},
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		expect(calls).toHaveLength(1);
+		const argv = calls[0]?.command.argv ?? [];
+		expect(argv).not.toContain("--no-extensions");
+		expect(argv).toContain("--approve");
+		const toolsIdx = argv.indexOf("--tools");
+		expect(argv[toolsIdx + 1]).toBe("read,subagent");
+		const providerIdx = argv.indexOf("--provider");
+		expect(argv[providerIdx + 1]).toBe("openai");
+		const modelIdx = argv.indexOf("--model");
+		expect(argv[modelIdx + 1]).toBe("gpt-4o");
+	});
+
+	test("frontmatter.pi drops unknown and invalid values before argv rendering", async () => {
+		const burrow = seedActiveBurrow(client, workspaceDir);
+		client.agents.register(piRuntime);
+		const calls: CollectedSpawn[] = [];
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ stdoutLines: [], calls }),
+			installCheck: async () => ({ installed: true, version: "0.78.1", path: "/usr/local/bin/pi" }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "pi",
+			prompt: "p",
+			metadata: {
+				frontmatter: {
+					pi: {
+						extensions: "true",
+						approve: 1,
+						tools: ["read", 7, "subagent"],
+						unsafeArgv: ["--no-offline"],
+					},
+				},
+			},
+		});
+		await waitFor(() => client.runs.get(run.id).state === "succeeded");
+		await dispatcher.stop();
+
+		expect(calls).toHaveLength(1);
+		const argv = calls[0]?.command.argv ?? [];
+		expect(argv).toContain("--no-extensions");
+		expect(argv).not.toContain("--approve");
+		expect(argv).not.toContain("unsafeArgv");
+		expect(argv).not.toContain("--no-offline");
+		const toolsIdx = argv.indexOf("--tools");
+		expect(argv[toolsIdx + 1]).toBe("read,subagent");
+	});
+
 	test("no frontmatter override → dispatch profile envPassthrough unchanged (burrow-6f3f)", async () => {
 		// The default-provider path (no frontmatter) must not mutate the
 		// profile envPassthrough — the up-time bake already covered the

@@ -36,6 +36,7 @@ import type {
 	AgentFrontmatter,
 	AgentRuntime,
 	InstallCheckResult,
+	PiFrontmatterOptions,
 	RuntimeEvent,
 } from "../runtime/runtime.ts";
 import type { RunOutcome } from "./run-loop.ts";
@@ -520,21 +521,65 @@ function applyRuntimeEnvPassthrough(
 }
 
 /**
- * Pull `frontmatter.{provider,model}` off `Run.metadataJson` if an upstream
- * caller (e.g. warren) stored it there (burrow-b5b4). Strings only; other
- * shapes are dropped silently. Returns `undefined` when no usable fields
- * remain so the dispatcher can omit the field from `SpawnContext` rather
- * than passing an empty object that just adds noise.
+ * Pull supported fields off `Run.metadataJson.frontmatter` if an upstream
+ * caller (e.g. warren) stored it there (burrow-b5b4). Strings only for
+ * provider/model; `pi` is narrowed to Burrow's allowlisted option bag so
+ * arbitrary metadata never becomes runtime argv. Returns `undefined` when
+ * no usable fields remain so the dispatcher can omit the field from
+ * `SpawnContext` rather than passing an empty object that just adds noise.
  */
 function readFrontmatter(metadata: unknown): AgentFrontmatter | undefined {
 	if (metadata === null || typeof metadata !== "object") return undefined;
 	const raw = (metadata as Record<string, unknown>).frontmatter;
-	if (raw === null || typeof raw !== "object") return undefined;
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const obj = raw as Record<string, unknown>;
 	const out: AgentFrontmatter = {};
 	if (typeof obj.provider === "string") out.provider = obj.provider;
 	if (typeof obj.model === "string") out.model = obj.model;
+	const pi = readPiFrontmatterOptions(obj.pi);
+	if (pi !== undefined) out.pi = pi;
 	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readPiFrontmatterOptions(raw: unknown): PiFrontmatterOptions | undefined {
+	if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+	const obj = raw as Record<string, unknown>;
+	const out: PiFrontmatterOptions = {};
+	copyBooleanOption(obj, out, "extensions");
+	copyBooleanOption(obj, out, "approve");
+	copyBooleanOption(obj, out, "noTools");
+	copyBooleanOption(obj, out, "noBuiltinTools");
+	copyStringListOption(obj, out, "tools");
+	copyStringListOption(obj, out, "excludeTools");
+	copyStringListOption(obj, out, "extension");
+	copyStringListOption(obj, out, "skill");
+	copyStringListOption(obj, out, "promptTemplate");
+	copyStringListOption(obj, out, "theme");
+	return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function copyBooleanOption<K extends keyof PiFrontmatterOptions>(
+	input: Record<string, unknown>,
+	output: PiFrontmatterOptions,
+	key: K,
+): void {
+	if (typeof input[key] === "boolean") output[key] = input[key] as PiFrontmatterOptions[K];
+}
+
+function copyStringListOption<K extends keyof PiFrontmatterOptions>(
+	input: Record<string, unknown>,
+	output: PiFrontmatterOptions,
+	key: K,
+): void {
+	const value = input[key];
+	if (typeof value === "string") {
+		output[key] = value as PiFrontmatterOptions[K];
+		return;
+	}
+	if (Array.isArray(value)) {
+		const strings = value.filter((entry): entry is string => typeof entry === "string");
+		if (strings.length > 0) output[key] = strings as unknown as PiFrontmatterOptions[K];
+	}
 }
 
 async function* readLines(stream: ReadableStream<Uint8Array>): AsyncGenerator<string, void, void> {
