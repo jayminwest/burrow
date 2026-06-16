@@ -841,7 +841,7 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 					pi: {
 						extensions: true,
 						approve: true,
-						tools: ["read", "subagent"],
+						tools: ["read", "my_extension_tool"],
 					},
 				},
 			},
@@ -854,7 +854,7 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 		expect(argv).not.toContain("--no-extensions");
 		expect(argv).toContain("--approve");
 		const toolsIdx = argv.indexOf("--tools");
-		expect(argv[toolsIdx + 1]).toBe("read,subagent");
+		expect(argv[toolsIdx + 1]).toBe("read,my_extension_tool");
 		const providerIdx = argv.indexOf("--provider");
 		expect(argv[providerIdx + 1]).toBe("openai");
 		const modelIdx = argv.indexOf("--model");
@@ -882,7 +882,7 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 					pi: {
 						extensions: "true",
 						approve: 1,
-						tools: ["read", 7, "subagent"],
+						tools: ["read", 7, "my_extension_tool"],
 						unsafeArgv: ["--no-offline"],
 					},
 				},
@@ -898,7 +898,7 @@ describe("startRunDispatcher · piRuntime end-to-end (golden fixtures)", () => {
 		expect(argv).not.toContain("unsafeArgv");
 		expect(argv).not.toContain("--no-offline");
 		const toolsIdx = argv.indexOf("--tools");
-		expect(argv[toolsIdx + 1]).toBe("read,subagent");
+		expect(argv[toolsIdx + 1]).toBe("read,my_extension_tool");
 	});
 
 	test("no frontmatter override → dispatch profile envPassthrough unchanged (burrow-6f3f)", async () => {
