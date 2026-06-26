@@ -357,6 +357,102 @@ describe("buildPiArgv", () => {
 		expect(argv[modelIdx + 1]).toBe("gpt-4o");
 	});
 
+	test("frontmatter.pi.extensions elides --no-extensions for batch pi", () => {
+		const argv = buildPiArgv({ pi: { extensions: true } });
+		expect(argv).toEqual([...PI_FORCED_ARGV_WITH_EXTENSIONS, "--model", PI_DEFAULT_MODEL]);
+		expect(argv).not.toContain("--no-extensions");
+	});
+
+	test("frontmatter.pi.approve trusts project resources without changing provider/model", () => {
+		const argv = buildPiArgv({ pi: { approve: true } });
+		expect(argv).toEqual([
+			"pi",
+			"--mode",
+			"rpc",
+			"--session-dir",
+			PI_SESSION_DIR,
+			"--no-extensions",
+			"--offline",
+			"--approve",
+			"--provider",
+			PI_DEFAULT_PROVIDER,
+			"--model",
+			PI_DEFAULT_MODEL,
+		]);
+	});
+
+	test("frontmatter.pi options compose allowlisted flags in stable order", () => {
+		const argv = buildPiArgv({
+			provider: "openai",
+			model: "gpt-4o",
+			pi: {
+				extensions: true,
+				approve: true,
+				noBuiltinTools: true,
+				tools: ["read", "my_extension_tool"],
+				excludeTools: "bash,write",
+				extension: [".pi/extensions/a.ts", " .pi/extensions/b.ts "],
+				skill: ".pi/skills/review/SKILL.md",
+				promptTemplate: [".pi/prompts/summary.md"],
+				theme: [" ", ".pi/themes/dark.json"],
+			},
+		});
+		expect(argv).toEqual([
+			"pi",
+			"--mode",
+			"rpc",
+			"--session-dir",
+			PI_SESSION_DIR,
+			"--offline",
+			"--approve",
+			"--no-builtin-tools",
+			"--tools",
+			"read,my_extension_tool",
+			"--exclude-tools",
+			"bash,write",
+			"--extension",
+			".pi/extensions/a.ts",
+			"--extension",
+			".pi/extensions/b.ts",
+			"--skill",
+			".pi/skills/review/SKILL.md",
+			"--prompt-template",
+			".pi/prompts/summary.md",
+			"--theme",
+			".pi/themes/dark.json",
+			"--provider",
+			"openai",
+			"--model",
+			"gpt-4o",
+		]);
+	});
+
+	test("frontmatter.pi ignores unknown and wrong-shaped option values", () => {
+		const argv = buildPiArgv({
+			pi: {
+				extensions: false,
+				approve: "yes" as unknown as boolean,
+				tools: ["read", 7] as unknown as string[],
+				extension: "   ",
+			},
+		});
+		expect(argv).toEqual([
+			"pi",
+			"--mode",
+			"rpc",
+			"--session-dir",
+			PI_SESSION_DIR,
+			"--no-extensions",
+			"--offline",
+			"--tools",
+			"read",
+			"--provider",
+			PI_DEFAULT_PROVIDER,
+			"--model",
+			PI_DEFAULT_MODEL,
+		]);
+	});
+
 	test("extensions: false is byte-identical to the no-options call (default keeps --no-extensions)", () => {
 		expect(buildPiArgv(undefined, { extensions: false })).toEqual(buildPiArgv());
 		expect(buildPiArgv({ provider: "openai" }, { extensions: false })).toEqual(
@@ -836,6 +932,35 @@ describe("piRuntime.encodeSteeringMessage (burrow-250d)", () => {
 		// terminate the JSON envelope with \n so pi's line-delimited RPC
 		// loop processes it (burrow-faf5).
 		expect(midRun).toBe(atSpawn);
+	});
+});
+
+describe("piRuntime.autoRespondToEvent (extension_ui_request decline)", () => {
+	test("declines extension_ui_request with cancelled response carrying request id", () => {
+		const events = piRuntime.parseEvents(
+			JSON.stringify({
+				type: "extension_ui_request",
+				id: "ui-req-42",
+				extensionId: "ext.foo",
+				prompt: "approve?",
+			}),
+			{ burrow: fakeBurrow(), run: fakeRun() },
+		);
+		const ev = events[0];
+		if (!ev) throw new Error("expected one event");
+		const out = piRuntime.autoRespondToEvent?.(ev);
+		expect(out).toBeDefined();
+		expect(JSON.parse(out?.stdin.trimEnd() ?? "")).toEqual({
+			type: "extension_ui_response",
+			id: "ui-req-42",
+			cancelled: true,
+		});
+		expect(out?.stdin.endsWith("\n")).toBe(true);
+	});
+
+	test("returns undefined for non-extension_ui_request events", () => {
+		const ev: RuntimeEvent = { kind: "text", stream: "stdout", payload: { text: "hi" } };
+		expect(piRuntime.autoRespondToEvent?.(ev)).toBeUndefined();
 	});
 });
 
