@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`feat(runtime/pi)`** — plain `pi` now accepts an allowlisted
+  `frontmatter.pi` option bag for batch-safe CLI customization without
+  minting new runtime ids. Supported fields cover extension discovery
+  (`extensions`), project trust (`approve`), generic Pi tool filters
+  (`tools`, `excludeTools`, `noTools`, `noBuiltinTools`), and explicit
+  resource paths (`extension`, `skill`, `promptTemplate`, `theme`). Tool
+  names are passed through to Pi exactly as provided, so callers can
+  allowlist built-in tools or tools registered by any installed extension
+  package. Defaults stay byte-identical to the locked `PI_FORCED_ARGV`
+  shape.
+
+### Changed
+
+- **`fix(runtime/pi)`** — plain `pi` now auto-declines
+  `extension_ui_request` envelopes when a run opts into extensions, so
+  batch runs can load extensions without hanging on interactive extension
+  UI prompts.
+
 ## [0.3.13] - 2026-06-07
 
 Maintenance release: tolerant run teardown, SQLite reclamation, and

@@ -286,6 +286,16 @@ export const piRuntime: AgentRuntime = {
 		return !!payload && payload.type === "agent_end";
 	},
 
+	/**
+	 * If a run opts into extensions through `frontmatter.pi.extensions`, keep
+	 * the batch runtime hang-safe by auto-declining any interactive extension UI
+	 * prompt. Runs with the default `--no-extensions` argv never see this event.
+	 */
+	autoRespondToEvent(event: RuntimeEvent): { stdin: string } | undefined {
+		if (!isPiExtensionUiRequest(event)) return undefined;
+		return { stdin: encodeExtensionUiDecline(event.payload) };
+	},
+
 	encodeInboxMessage(messages: Message[]): { stdin: string } {
 		return { stdin: messages.map((m) => `${piPromptCommandFromMessage(m)}\n`).join("") };
 	},
@@ -322,12 +332,10 @@ export const piRuntime: AgentRuntime = {
 };
 
 /**
- * Options for `buildPiArgv` (burrow-12ba). The single knob today is
- * `extensions`: opting in elides the `--no-extensions` flag so a runtime
- * that *can* answer pi's interactive `extension_ui_request` RPC (notably
- * pi-chat, which auto-declines via `autoRespondToEvent`) gets pi's full
- * extension surface. Default is `extensions: false` — plain `pi` keeps its
- * locked, byte-identical argv shape (see `PI_FORCED_ARGV`).
+ * Options for `buildPiArgv` (burrow-12ba). `extensions` is the runtime-level
+ * override used by pi-chat; plain pi can also opt in via
+ * `frontmatter.pi.extensions`. Default behavior keeps the locked,
+ * byte-identical argv shape (see `PI_FORCED_ARGV`).
  */
 export interface BuildPiArgvOptions {
 	extensions?: boolean;
@@ -343,23 +351,115 @@ export interface BuildPiArgvOptions {
  * projects opt non-anthropic provider keys in via `burrow.toml [env]`
  * (mx-d46d5d).
  *
- * The optional `options.extensions` seam (burrow-12ba) elides
- * `--no-extensions` when the caller can drive pi's extension UI surface.
- * Plain pi never sets this — its argv is locked to `PI_FORCED_ARGV` — so
- * the no-options call site remains byte-identical to the V1 shape.
+ * The optional `options.extensions` seam (burrow-12ba) and
+ * `frontmatter.pi.extensions` elide `--no-extensions` when the runtime can
+ * drive pi's extension UI surface. Plain pi with no `frontmatter.pi` keeps
+ * the no-options call site byte-identical to the V1 shape. Additional
+ * `frontmatter.pi` entries map to an allowlisted set of pi CLI flags so
+ * upstream callers can opt into project trust, tool filters, and explicit
+ * resource paths without minting a new Burrow runtime for every flag combo.
  * Exported for unit tests.
  */
 export function buildPiArgv(
 	frontmatter?: AgentFrontmatter,
 	options?: BuildPiArgvOptions,
 ): string[] {
-	const withExtensions = options?.extensions === true;
+	const piOptions = parsePiFrontmatterOptions(frontmatter?.pi);
+	const withExtensions = options?.extensions === true || piOptions.extensions === true;
 	const argv: string[] = [PI_BIN, "--mode", "rpc", "--session-dir", PI_SESSION_DIR];
 	if (!withExtensions) argv.push("--no-extensions");
-	argv.push("--offline", "--provider", nonEmpty(frontmatter?.provider) ?? PI_DEFAULT_PROVIDER);
+	argv.push("--offline");
+	if (piOptions.approve === true) argv.push("--approve");
+	if (piOptions.noTools === true) argv.push("--no-tools");
+	if (piOptions.noBuiltinTools === true) argv.push("--no-builtin-tools");
+	appendCommaOption(argv, "--tools", piOptions.tools);
+	appendCommaOption(argv, "--exclude-tools", piOptions.excludeTools);
+	appendRepeatedOption(argv, "--extension", piOptions.extension);
+	appendRepeatedOption(argv, "--skill", piOptions.skill);
+	appendRepeatedOption(argv, "--prompt-template", piOptions.promptTemplate);
+	appendRepeatedOption(argv, "--theme", piOptions.theme);
+	argv.push("--provider", nonEmpty(frontmatter?.provider) ?? PI_DEFAULT_PROVIDER);
 	const model = nonEmpty(frontmatter?.model) ?? PI_DEFAULT_MODEL;
 	argv.push("--model", model);
 	return argv;
+}
+
+type ParsedPiFrontmatterOptions = {
+	extensions?: boolean;
+	approve?: boolean;
+	noTools?: boolean;
+	noBuiltinTools?: boolean;
+	tools: readonly string[];
+	excludeTools: readonly string[];
+	extension: readonly string[];
+	skill: readonly string[];
+	promptTemplate: readonly string[];
+	theme: readonly string[];
+};
+
+function parsePiFrontmatterOptions(input: unknown): ParsedPiFrontmatterOptions {
+	const obj =
+		input !== null && typeof input === "object" && !Array.isArray(input)
+			? (input as Record<string, unknown>)
+			: {};
+	return {
+		extensions: readBooleanOption(obj.extensions),
+		approve: readBooleanOption(obj.approve),
+		noTools: readBooleanOption(obj.noTools),
+		noBuiltinTools: readBooleanOption(obj.noBuiltinTools),
+		tools: readStringListOption(obj.tools),
+		excludeTools: readStringListOption(obj.excludeTools),
+		extension: readStringListOption(obj.extension),
+		skill: readStringListOption(obj.skill),
+		promptTemplate: readStringListOption(obj.promptTemplate),
+		theme: readStringListOption(obj.theme),
+	};
+}
+
+function readBooleanOption(value: unknown): boolean | undefined {
+	return typeof value === "boolean" ? value : undefined;
+}
+
+function readStringListOption(value: unknown): readonly string[] {
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		return trimmed.length > 0 ? [trimmed] : [];
+	}
+	if (!Array.isArray(value)) return [];
+	return value
+		.filter((entry): entry is string => typeof entry === "string")
+		.map((entry) => entry.trim())
+		.filter((entry) => entry.length > 0);
+}
+
+function appendCommaOption(argv: string[], flag: string, values: readonly string[]): void {
+	if (values.length === 0) return;
+	argv.push(flag, values.join(","));
+}
+
+function appendRepeatedOption(argv: string[], flag: string, values: readonly string[]): void {
+	for (const value of values) argv.push(flag, value);
+}
+
+export function encodeExtensionUiDecline(payload: unknown): string {
+	const id = readStringField(payload, "id");
+	return `${JSON.stringify({
+		type: "extension_ui_response",
+		id: id ?? null,
+		cancelled: true,
+	})}\n`;
+}
+
+export function isPiExtensionUiRequest(event: RuntimeEvent): boolean {
+	if (event.kind !== "state_change") return false;
+	const payload = event.payload as { type?: unknown } | null | undefined;
+	return !!payload && payload.type === "extension_ui_request";
+}
+
+function readStringField(payload: unknown, key: string): string | undefined {
+	if (!payload || typeof payload !== "object") return undefined;
+	const v = (payload as Record<string, unknown>)[key];
+	return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
 function nonEmpty(value: string | undefined): string | undefined {
