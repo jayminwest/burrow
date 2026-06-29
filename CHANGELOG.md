@@ -7,8 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-06-29
+
+Multi-provider release: pi can now authenticate against Z.AI (GLM), gains
+a batch-safe `frontmatter.pi` option bag, and adopts the fleet's canonical
+`check:all` standard.
+
 ### Added
 
+- **`feat(runtime/pi)`** — add `zai` to `PI_PROVIDER_ENV_KEYS` so a pi run
+  with `provider: zai` forwards `ZAI_API_KEY` into the sandbox. pi-ai's
+  zai provider hardcodes its base URL, so no `*_BASE_URL` key is wired.
+  GLM models (`glm-4.7`, `glm-4.5-air`, …) are now reachable through the
+  multi-provider surface. (mx-zai)
 - **`feat(runtime/pi)`** — plain `pi` now accepts an allowlisted
   `frontmatter.pi` option bag for batch-safe CLI customization without
   minting new runtime ids. Supported fields cover extension discovery
@@ -26,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `extension_ui_request` envelopes when a run opts into extensions, so
   batch runs can load extensions without hanging on interactive extension
   UI prompts.
+- **`quality`** — adopt the canonical fleet `check:all` standard
+  (byte-identical quiet runner + CI parity gate). (pl-beec)
 
 ## [0.3.13] - 2026-06-07
 

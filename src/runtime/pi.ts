@@ -217,6 +217,12 @@ export const PI_ENV_PASSTHROUGH: readonly string[] = [
  * google provider. Provider names are matched case-insensitively to match
  * warren's lowercase normalization on the schema side (warren
  * `src/registry/schema.ts:93`).
+ *
+ * `zai` (Z.AI / GLM) reads only `ZAI_API_KEY` — pi-ai's zai provider
+ * hardcodes its base URL (`https://api.z.ai/api/coding/paas/v4`) and reads
+ * no `*_BASE_URL` override, so there is no base-URL key to forward (unlike
+ * openai). The China endpoint is a separate pi provider (`zai-coding-cn`)
+ * and is intentionally not wired here.
  */
 export const PI_PROVIDER_ENV_KEYS: Readonly<Record<string, readonly string[]>> = {
 	openai: ["OPENAI_API_KEY", "OPENAI_BASE_URL"],
@@ -224,6 +230,7 @@ export const PI_PROVIDER_ENV_KEYS: Readonly<Record<string, readonly string[]>> =
 	groq: ["GROQ_API_KEY"],
 	mistral: ["MISTRAL_API_KEY"],
 	deepseek: ["DEEPSEEK_API_KEY"],
+	zai: ["ZAI_API_KEY"],
 };
 
 /**
