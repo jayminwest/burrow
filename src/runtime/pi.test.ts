@@ -525,6 +525,8 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 			["groq", ["GROQ_API_KEY"]],
 			["mistral", ["MISTRAL_API_KEY"]],
 			["deepseek", ["DEEPSEEK_API_KEY"]],
+			// Z.AI / GLM: single key, base URL hardcoded by pi-ai.
+			["zai", ["ZAI_API_KEY"]],
 		];
 		for (const [provider, keys] of cases) {
 			const names = piEnvPassthrough({ frontmatter: { provider } });
@@ -562,7 +564,19 @@ describe("piRuntime.envPassthrough (burrow-6f3f)", () => {
 			groq: ["GROQ_API_KEY"],
 			mistral: ["MISTRAL_API_KEY"],
 			deepseek: ["DEEPSEEK_API_KEY"],
+			zai: ["ZAI_API_KEY"],
 		});
+	});
+
+	test("provider=zai → base + ZAI_API_KEY only (base URL hardcoded by pi-ai)", () => {
+		const names = piEnvPassthrough({ frontmatter: { provider: "zai" } });
+		expect(names).toEqual([...PI_ENV_PASSTHROUGH, "ZAI_API_KEY"]);
+		// pi-ai's zai provider has no base-URL override env var, so we must
+		// not invent a ZAI_BASE_URL passthrough.
+		expect(names).not.toContain("ZAI_BASE_URL");
+		// Single-key delta — sibling providers' keys must not leak.
+		expect(names).not.toContain("OPENAI_API_KEY");
+		expect(names).not.toContain("DEEPSEEK_API_KEY");
 	});
 
 	test("provider=gemini → base only (pi has no 'gemini' provider; unknown contributes nothing)", () => {

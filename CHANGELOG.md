@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.14] - 2026-06-29
+
+Multi-provider release: pi can now authenticate against Z.AI (GLM) plus
+the fleet's canonical `check:all` standard.
+
+### Added
+
+- **`feat(runtime/pi)`** — add `zai` to `PI_PROVIDER_ENV_KEYS` so a pi run
+  with `provider: zai` forwards `ZAI_API_KEY` into the sandbox. pi-ai's
+  zai provider hardcodes its base URL, so no `*_BASE_URL` key is wired.
+  GLM models (`glm-4.7`, `glm-4.5-air`, …) are now reachable through the
+  multi-provider surface. (mx-zai)
+
+### Changed
+
+- **`quality`** — adopt the canonical fleet `check:all` standard
+  (byte-identical quiet runner + CI parity gate). (pl-beec)
+
 ## [0.3.13] - 2026-06-07
 
 Maintenance release: tolerant run teardown, SQLite reclamation, and
