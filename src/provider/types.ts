@@ -129,4 +129,14 @@ export interface SpawnResult {
 	 * if the child has already closed stdin / exited.
 	 */
 	writeStdin?: (chunk: string) => Promise<void>;
+	/**
+	 * True when the kernel OOM-killed a process inside this sandbox's
+	 * cgroup (burrow-2083). Only present on Linux when the spawn got a
+	 * per-sandbox cgroup with `memory.max` applied; absent means limits
+	 * were unenforced (macOS Seatbelt has no memory controller, or the
+	 * host's cgroup v2 tree wasn't writable). Consult after `exited`
+	 * resolves — dispatch uses it to fail the run with an explicit OOM
+	 * reason instead of a bare exit code.
+	 */
+	oomKilled?: () => boolean;
 }

@@ -408,6 +408,21 @@ export interface SandboxProfile {
 
 The provider's `exec(handle, command)` builds the profile, renders the platform-specific invocation, and `Bun.spawn`s it. Streams flow back as `ReadableStream<Uint8Array>` for stdout/stderr.
 
+`memoryLimitMb` / `cpuLimit` are **enforced on Linux** via a per-sandbox
+cgroup v2 leaf (burrow-2083): the spawn argv is wrapped in an exec shim
+that enters `/sys/fs/cgroup/burrow-sb-<id>` (with `memory.max`, and
+`cpu.max` when `cpuLimit` is set) before exec'ing bwrap, so the whole
+sandbox tree lives inside the limit — a runaway is OOM-killed inside its
+own cgroup instead of taking the host (and `burrow serve` itself) down.
+When the profile carries no memory limit, a conservative default
+(`DEFAULT_SANDBOX_MEMORY_LIMIT_MB`, 4096) applies;
+`BURROW_SANDBOX_MEMORY_LIMIT_MB` overrides it (`0` opts out). An OOM kill
+surfaces as `SpawnResult.oomKilled()`, which dispatch converts into an
+explicit `oom_killed` system event plus a `sandbox memory limit exceeded`
+failure reason. On hosts without a writable cgroup v2 tree (macOS, or a
+container without cgroup delegation) the limits are unenforced and the
+spawn proceeds uncapped, matching pre-2083 behavior.
+
 `inboundPortForwards` is the declarative shape for `R-08` (warren §11.L
 preview environments): the caller (warren) allocates `hostPort` from its
 own SQLite-backed port allocator and burrow plumbs traffic from

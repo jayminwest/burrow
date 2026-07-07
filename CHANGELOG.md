@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.15] - 2026-07-07
+
+Resource-enforcement release: sandbox memory/cpu limits are now actually
+enforced on Linux via per-sandbox cgroup v2, closing the host-OOM class
+of failures observed on warren-deployed (a runaway toolchain inside one
+sandbox could exhaust host RAM and get `burrow serve` itself OOM-killed,
+crash-looping the runtime and orphaning every in-flight run).
+
+### Added
+
+- **`feat(provider/local)`** — enforce `sandbox.memory_limit_mb` (and
+  `cpu_limit`) on the Linux bwrap spawn path via a per-sandbox cgroup v2
+  leaf (burrow-2083). Each spawn is wrapped in an exec shim that enters
+  `/sys/fs/cgroup/burrow-sb-<id>` — with `memory.max` (and `cpu.max`)
+  written first — before exec'ing bwrap, so the entire sandbox tree lives
+  inside the limit from its first instruction. A runaway is OOM-killed
+  inside its own cgroup: the run fails cleanly and burrow + the host
+  survive. Unconfigured profiles get a conservative 4096 MB default
+  (`DEFAULT_SANDBOX_MEMORY_LIMIT_MB`); `BURROW_SANDBOX_MEMORY_LIMIT_MB`
+  overrides it, `0` opts out. Hosts without a writable cgroup v2 tree
+  (macOS, non-delegated containers) degrade gracefully to the previous
+  uncapped behavior.
+- **`feat(runner)`** — explicit OOM failure signal (burrow-2083). An
+  OOM-killed run finalizes with `errorMessage: "sandbox memory limit
+  exceeded (oom-killed, exit N)"` and an `oom_killed` system event
+  (payload: `exitCode`, `memoryLimitMb`) instead of a bare `agent exited
+  with code 137`, so orchestrators (warren) can fail fast and message the
+  operator precisely rather than waiting out a heartbeat watchdog.
+  `SpawnResult` gains an optional `oomKilled()` probe.
+
 ## [0.3.14] - 2026-06-29
 
 Multi-provider release: pi can now authenticate against Z.AI (GLM), gains

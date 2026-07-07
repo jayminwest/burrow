@@ -384,6 +384,25 @@ export async function dispatchRun(input: DispatchRunInput): Promise<RunOutcome> 
 	if (cancelled) {
 		return { state: "cancelled", exitCode, errorMessage: "cancelled via signal" };
 	}
+	// Explicit OOM signal (burrow-2083): checked before the stream-error
+	// branch because an OOM kill also tears the event stream mid-line —
+	// the memory limit is the root cause, not the stream. Without this,
+	// an OOM surfaces as a bare "agent exited with code 137" and warren
+	// can't distinguish it from any other kill.
+	if (proc.oomKilled?.()) {
+		persistEvents([
+			{
+				kind: "oom_killed",
+				stream: "system",
+				payload: { exitCode, memoryLimitMb: runProfile.memoryLimitMb ?? null },
+			},
+		]);
+		return {
+			state: "failed",
+			exitCode,
+			errorMessage: `sandbox memory limit exceeded (oom-killed, exit ${exitCode})`,
+		};
+	}
 	if (runtimeError) {
 		const message = runtimeError instanceof Error ? runtimeError.message : String(runtimeError);
 		return { state: "failed", exitCode, errorMessage: `event stream failed: ${message}` };

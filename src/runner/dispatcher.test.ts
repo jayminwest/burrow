@@ -35,6 +35,7 @@ interface FakeSpawnOpts {
 	stdoutLines?: string[];
 	exitCode?: number;
 	calls?: CollectedSpawn[];
+	oomKilled?: boolean;
 }
 
 function fakeSpawn(opts: FakeSpawnOpts = {}): SpawnFn {
@@ -64,6 +65,10 @@ function fakeSpawn(opts: FakeSpawnOpts = {}): SpawnFn {
 			exited,
 			cancel: () => resolveExit(130),
 		};
+		if (opts.oomKilled !== undefined) {
+			const flag = opts.oomKilled;
+			result.oomKilled = () => flag;
+		}
 		queueMicrotask(() => resolveExit(opts.exitCode ?? 0));
 		return result;
 	};
@@ -260,6 +265,61 @@ describe("startRunDispatcher", () => {
 
 		expect(calls).toHaveLength(0);
 		expect(client.runs.get(run.id).errorMessage).toContain("stopped");
+	});
+
+	test("oom-killed spawn finalizes failed with an explicit oom reason + system event (burrow-2083)", async () => {
+		const burrow = seedActiveBurrow(client);
+		client.agents.register(fakeRuntime());
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ exitCode: 137, oomKilled: true }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "failed");
+		await dispatcher.stop();
+
+		const finalized = client.runs.get(run.id);
+		expect(finalized.state).toBe("failed");
+		expect(finalized.exitCode).toBe(137);
+		expect(finalized.errorMessage).toContain("memory limit exceeded");
+		expect(finalized.errorMessage).toContain("oom-killed");
+
+		const events = client.repos.events.listByBurrow(burrow.id, { limit: 100 });
+		const oomEvent = events.find((e) => e.kind === "oom_killed");
+		expect(oomEvent).toBeDefined();
+		expect(oomEvent?.stream).toBe("system");
+		expect((oomEvent?.payloadJson as { exitCode: number }).exitCode).toBe(137);
+	});
+
+	test("non-oom failure keeps the bare exit-code errorMessage (burrow-2083)", async () => {
+		const burrow = seedActiveBurrow(client);
+		client.agents.register(fakeRuntime());
+
+		const dispatcher = startRunDispatcher(client, {
+			logger: silentLogger,
+			spawn: fakeSpawn({ exitCode: 137, oomKilled: false }),
+		});
+		dispatcher.start();
+
+		const run = client.runs.create({
+			burrowId: burrow.id,
+			agentId: "fake",
+			prompt: "p",
+		});
+		await waitFor(() => client.runs.get(run.id).state === "failed");
+		await dispatcher.stop();
+
+		const finalized = client.runs.get(run.id);
+		expect(finalized.errorMessage).toBe("agent exited with code 137");
+		const events = client.repos.events.listByBurrow(burrow.id, { limit: 100 });
+		expect(events.some((e) => e.kind === "oom_killed")).toBe(false);
 	});
 
 	test("drain controller starts off and round-trips set/get (burrow-79ad)", async () => {

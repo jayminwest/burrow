@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxProfile, SpawnCommand, SpawnResult } from "../types.ts";
 import { buildBwrapArgv } from "./bwrap.ts";
+import { prepareSandboxCgroup, resolveSandboxLimits, wrapArgvForCgroup } from "./cgroup.ts";
 import { resolveSandboxEnv } from "./env.ts";
 import { buildSeatbeltArgv, buildSeatbeltProfile } from "./seatbelt.ts";
 
@@ -103,7 +104,17 @@ async function spawnLinux(
 	command: SpawnCommand,
 	options: RunSandboxedOptions,
 ): Promise<SpawnResult> {
-	const argv = buildBwrapArgv(profile, command, { bwrapBin: options.bwrapBin });
+	// Resource enforcement (burrow-2083): bwrap only namespaces, it does
+	// not meter. Each spawn gets its own cgroup v2 leaf with memory.max
+	// (default DEFAULT_SANDBOX_MEMORY_LIMIT_MB when the profile is silent)
+	// so a runaway toolchain OOMs its own run instead of the host. Null
+	// when the host tree isn't writable — degrade to the pre-2083
+	// unlimited spawn rather than refusing to run.
+	const limits = resolveSandboxLimits(profile, process.env);
+	const cgroup = limits ? prepareSandboxCgroup(limits) : null;
+
+	let argv = buildBwrapArgv(profile, command, { bwrapBin: options.bwrapBin });
+	if (cgroup) argv = wrapArgvForCgroup(argv, cgroup.procsPath);
 	const env = resolveSandboxEnv(profile, command, {
 		homePath: "/workspace",
 		hostEnv: process.env,
@@ -122,14 +133,20 @@ async function spawnLinux(
 
 	await writeStringStdin(proc, command.stdin, command.holdStdin ?? false);
 
+	// cleanup() snapshots the oom_kill counter before removing the leaf,
+	// so oomKilled() stays truthful after teardown (dispatch reads it
+	// after `exited` resolves).
+	const exited = cgroup ? proc.exited.finally(() => cgroup.cleanup()) : proc.exited;
+
 	return {
 		pid: proc.pid,
 		stdout: proc.stdout as ReadableStream<Uint8Array>,
 		stderr: proc.stderr as ReadableStream<Uint8Array>,
-		exited: proc.exited,
+		exited,
 		cancel: () => proc.kill(),
 		closeStdin: makeCloseStdin(proc),
 		writeStdin: makeWriteStdin(proc),
+		...(cgroup ? { oomKilled: () => cgroup.oomKilled() } : {}),
 	};
 }
 
